@@ -182,15 +182,19 @@ final class Benchmark {
       double? netBytes;
       double? netObjects;
       if (mainRun.memory != null && noOpRun.memory != null) {
-        final netB =
-            mainRun.memory!.allocatedBytesPerIteration -
-            noOpRun.memory!.allocatedBytesPerIteration;
-        netBytes = netB < 0 ? 0.0 : netB;
+        final mainB = mainRun.memory!.allocatedBytesPerIteration;
+        final noOpB = noOpRun.memory!.allocatedBytesPerIteration;
+        if (mainB != null && noOpB != null) {
+          final netB = mainB - noOpB;
+          netBytes = netB < 0 ? 0.0 : netB;
+        }
 
-        final netO =
-            mainRun.memory!.allocatedObjectsPerIteration -
-            noOpRun.memory!.allocatedObjectsPerIteration;
-        netObjects = netO < 0 ? 0.0 : netO;
+        final mainO = mainRun.memory!.allocatedObjectsPerIteration;
+        final noOpO = noOpRun.memory!.allocatedObjectsPerIteration;
+        if (mainO != null && noOpO != null) {
+          final netO = mainO - noOpO;
+          netObjects = netO < 0 ? 0.0 : netO;
+        }
       }
 
       double? netInstr;
@@ -351,10 +355,13 @@ final class Benchmark {
       }
 
       if (memory != null) {
-        print(
-          '  memory: ${formatBytes(memory.allocatedBytesPerIteration)} allocated '
-          '(${formatCount(memory.allocatedObjectsPerIteration)} objects) per iteration',
-        );
+        if (memory.allocatedBytesPerIteration != null &&
+            memory.allocatedObjectsPerIteration != null) {
+          print(
+            '  memory: ${formatBytes(memory.allocatedBytesPerIteration!)} allocated '
+            '(${formatCount(memory.allocatedObjectsPerIteration!)} objects) per iteration',
+          );
+        }
         print(
           '  RSS:    ${formatRssDelta(memory.rssDeltaBytes)} (native heap growth)',
         );
@@ -384,13 +391,20 @@ final class Benchmark {
       if (totalMemory != null && noOpMemory != null) {
         final totalBytes = totalMemory.allocatedBytesPerIteration;
         final overheadBytes = noOpMemory.allocatedBytesPerIteration;
-        final netBytes = totalBytes - overheadBytes;
-        final netBytesClamped = netBytes < 0 ? 0.0 : netBytes;
+        if (totalBytes != null && overheadBytes != null) {
+          final netBytes = totalBytes - overheadBytes;
+          final netBytesClamped = netBytes < 0 ? 0.0 : netBytes;
 
+          print(
+            '  memory: [Total: ${bold(formatBytes(totalBytes))}] '
+            '[Overhead: ${bold(formatBytes(overheadBytes))}] '
+            '[Net: ${bold(formatBytes(netBytesClamped))}]',
+          );
+        }
         print(
-          '  memory: [Total: ${bold(formatBytes(totalBytes))}] '
-          '[Overhead: ${bold(formatBytes(overheadBytes))}] '
-          '[Net: ${bold(formatBytes(netBytesClamped))}]',
+          '  RSS:    [Total: ${bold(formatRssDelta(totalMemory.rssDeltaBytes))}] '
+          '[Overhead: ${bold(formatRssDelta(noOpMemory.rssDeltaBytes))}] '
+          '[Net: ${bold(formatRssDelta(totalMemory.rssDeltaBytes - noOpMemory.rssDeltaBytes))}]',
         );
       }
 

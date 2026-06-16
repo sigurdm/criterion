@@ -7,10 +7,10 @@ import 'package:vm_service/vm_service_io.dart';
 /// Represents the result of a memory measurement phase.
 final class MemoryResult {
   /// The average number of bytes allocated per iteration.
-  final double allocatedBytesPerIteration;
+  final double? allocatedBytesPerIteration;
 
   /// The average number of objects allocated per iteration.
-  final double allocatedObjectsPerIteration;
+  final double? allocatedObjectsPerIteration;
 
   /// The total RSS delta during the measurement phase.
   final int rssDeltaBytes;
@@ -26,7 +26,7 @@ final class MemoryResult {
 final class MemoryMeasurer {
   /// Performs memory measurement for [fn] over [iterations] runs.
   ///
-  /// Returns `null` if the VM Service cannot be connected or if measurement fails.
+  /// Returns `null` if measurement fails.
   static Future<MemoryResult?> measure({
     required void Function() fn,
     required int iterations,
@@ -37,7 +37,7 @@ final class MemoryMeasurer {
       final info = await developer.Service.controlWebServer(enable: true);
       final uri = info.serverUri;
       if (uri == null) {
-        return null;
+        throw Exception('VM Service not available');
       }
       final wsUri = uri.replace(scheme: 'ws', path: '${uri.path}ws');
       service = await vmServiceConnectUri(wsUri.toString());
@@ -47,7 +47,7 @@ final class MemoryMeasurer {
         dart_isolate.Isolate.current,
       );
       if (isolateId == null) {
-        return null;
+        throw Exception('Isolate ID not found');
       }
 
       // 3. Trigger GC and reset allocation accumulators for baseline
@@ -107,8 +107,21 @@ final class MemoryMeasurer {
         rssDeltaBytes: rssDeltaBytes,
       );
     } catch (e) {
-      // Gracefully fall back if VM Service cannot be enabled or connected
-      return null;
+      // Fall back to measuring only RSS delta
+      try {
+        final baselineRss = ProcessInfo.currentRss;
+        for (var i = 0; i < iterations; i++) {
+          fn();
+        }
+        final endRss = ProcessInfo.currentRss;
+        return MemoryResult(
+          allocatedBytesPerIteration: null,
+          allocatedObjectsPerIteration: null,
+          rssDeltaBytes: endRss - baselineRss,
+        );
+      } catch (_) {
+        return null;
+      }
     } finally {
       if (service != null) {
         await service.dispose();

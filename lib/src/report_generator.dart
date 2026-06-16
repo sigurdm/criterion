@@ -424,9 +424,13 @@ final class ReportGenerator {
             `;
             
             if (primary.memory) {
+                if (primary.memory.allocatedBytesPerIteration !== null && primary.memory.allocatedBytesPerIteration !== undefined) {
+                    html += `
+                        <tr><td>Allocated Bytes</td><td class="metric-value">\${formatBytes(primary.memory.allocatedBytesPerIteration)}</td><td>-</td></tr>
+                        <tr><td>Allocated Objects</td><td class="metric-value">\${formatCount(primary.memory.allocatedObjectsPerIteration)}</td><td>-</td></tr>
+                    `;
+                }
                 html += `
-                    <tr><td>Allocated Bytes</td><td class="metric-value">\${formatBytes(primary.memory.allocatedBytesPerIteration)}</td><td>-</td></tr>
-                    <tr><td>Allocated Objects</td><td class="metric-value">\${formatCount(primary.memory.allocatedObjectsPerIteration)}</td><td>-</td></tr>
                     <tr><td>RSS Delta</td><td class="metric-value">\${formatBytes(primary.memory.rssDeltaBytes)}</td><td>-</td></tr>
                 `;
             }
@@ -497,8 +501,14 @@ final class ReportGenerator {
                 memoryCard.style.display = 'block';
                 if (memoryChart) memoryChart.destroy();
                 
-                const labels = ['Allocated Bytes', 'RSS Delta'];
-                const datasetData = [primary.memory.allocatedBytesPerIteration, primary.memory.rssDeltaBytes];
+                const labels = [];
+                const datasetData = [];
+                if (primary.memory.allocatedBytesPerIteration !== null && primary.memory.allocatedBytesPerIteration !== undefined) {
+                    labels.push('Allocated Bytes');
+                    datasetData.push(primary.memory.allocatedBytesPerIteration);
+                }
+                labels.push('RSS Delta');
+                datasetData.push(primary.memory.rssDeltaBytes);
                 
                 memoryChart = new Chart(document.getElementById('memoryChart'), {
                     type: 'bar',
@@ -507,8 +517,8 @@ final class ReportGenerator {
                         datasets: [{
                             label: 'Bytes',
                             data: datasetData,
-                            backgroundColor: bgColors.slice(0, 2),
-                            borderColor: colors.slice(0, 2),
+                            backgroundColor: bgColors.slice(0, labels.length),
+                            borderColor: colors.slice(0, labels.length),
                             borderWidth: 1
                         }]
                     },
