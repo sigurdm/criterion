@@ -1,8 +1,6 @@
-/// Support for doing something awesome.
-///
-/// More dartdocs go here.
+/// High-performance statistical benchmarking framework.
 library;
 
-export 'src/criterion_base.dart';
-
-// TODO: Export any libraries intended for clients of this package.
+export 'src/criterion.dart';
+export 'src/statistics.dart'
+    show Sample, ConfidenceInterval, BootstrapResult, OutlierAnalysis;
