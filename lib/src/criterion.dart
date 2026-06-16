@@ -1,16 +1,20 @@
 import 'statistics.dart';
 import 'memory_measurement.dart';
 import 'instruction_measurement.dart';
+import 'config.dart';
+import 'result.dart';
+import 'report_generator.dart';
 
 /// Defines a benchmark suite. Runs all registered benchmarks immediately.
-Future<void> criterion(
+Future<List<BenchmarkResult>> criterion(
   String suiteName,
-  void Function(Criterion c) body,
-) async {
+  void Function(Criterion c) body, {
+  CriterionConfig config = const CriterionConfig(),
+}) async {
   print('=== Running Suite: $suiteName ===');
-  final c = Criterion();
+  final c = Criterion(config: config);
   body(c);
-  await c.run();
+  return await c.run();
 }
 
 /// A class used to register and run benchmarks.
@@ -18,8 +22,14 @@ final class Criterion {
   final List<Benchmark> _benchmarks = [];
   final List<String> _groupPath = [];
 
+  /// The configuration for this Criterion instance.
+  final CriterionConfig config;
+
   /// The list of registered benchmarks.
   List<Benchmark> get benchmarks => List.unmodifiable(_benchmarks);
+
+  /// Creates a new [Criterion] instance.
+  Criterion({this.config = const CriterionConfig()});
 
   /// Registers a benchmark.
   void bench(
@@ -51,10 +61,14 @@ final class Criterion {
   }
 
   /// Runs all registered benchmarks and reports their results.
-  Future<void> run() async {
+  Future<List<BenchmarkResult>> run() async {
+    final results = <BenchmarkResult>[];
     for (final benchmark in _benchmarks) {
-      await benchmark.run();
+      final result = await benchmark.run();
+      results.add(result);
     }
+    await ReportGenerator(config).generate(results);
+    return results;
   }
 }
 
@@ -86,7 +100,7 @@ final class Benchmark {
 
   /// Executes the warm-up, calibration, sampling, statistical analysis,
   /// and outputs the report.
-  Future<void> run() async {
+  Future<BenchmarkResult> run() async {
     print('Benchmarking $name...');
 
     final hasNoOp = noOp != null;
@@ -123,6 +137,85 @@ final class Benchmark {
     _checkAndPrintFootnote();
 
     print(''); // Empty line after each benchmark
+
+    return _createResult(iterations, mainRun, noOpRun);
+  }
+
+  BenchmarkResult _createResult(
+    int iterations,
+    _MeasurementRun mainRun,
+    _MeasurementRun? noOpRun,
+  ) {
+    final primaryResult = MeasurementResult(
+      sampleTimes: mainRun.sample.values,
+      mean: mainRun.sample.mean,
+      median: mainRun.sample.median,
+      stdDev: mainRun.sample.stdDev,
+      meanCI: mainRun.bootstrap.meanConfidenceInterval,
+      medianCI: mainRun.bootstrap.medianConfidenceInterval,
+      outliers: mainRun.outliers,
+      memory: mainRun.memory,
+      instructions: mainRun.instructions,
+    );
+
+    MeasurementResult? noOpResult;
+    NetResult? netResult;
+
+    if (noOpRun != null) {
+      noOpResult = MeasurementResult(
+        sampleTimes: noOpRun.sample.values,
+        mean: noOpRun.sample.mean,
+        median: noOpRun.sample.median,
+        stdDev: noOpRun.sample.stdDev,
+        meanCI: noOpRun.bootstrap.meanConfidenceInterval,
+        medianCI: noOpRun.bootstrap.medianConfidenceInterval,
+        outliers: noOpRun.outliers,
+        memory: noOpRun.memory,
+        instructions: noOpRun.instructions,
+      );
+
+      final totalTime = mainRun.sample.mean;
+      final overheadTime = noOpRun.sample.mean;
+      final netTime = totalTime - overheadTime;
+      final netTimeClamped = netTime < 0 ? 0.0 : netTime;
+
+      double? netBytes;
+      double? netObjects;
+      if (mainRun.memory != null && noOpRun.memory != null) {
+        final netB =
+            mainRun.memory!.allocatedBytesPerIteration -
+            noOpRun.memory!.allocatedBytesPerIteration;
+        netBytes = netB < 0 ? 0.0 : netB;
+
+        final netO =
+            mainRun.memory!.allocatedObjectsPerIteration -
+            noOpRun.memory!.allocatedObjectsPerIteration;
+        netObjects = netO < 0 ? 0.0 : netO;
+      }
+
+      double? netInstr;
+      if (mainRun.instructions != null && noOpRun.instructions != null) {
+        final netI =
+            mainRun.instructions!.instructionsPerIteration -
+            noOpRun.instructions!.instructionsPerIteration;
+        netInstr = netI < 0 ? 0.0 : netI;
+      }
+
+      netResult = NetResult(
+        timeNs: netTimeClamped,
+        allocatedBytes: netBytes,
+        allocatedObjects: netObjects,
+        instructions: netInstr,
+      );
+    }
+
+    return BenchmarkResult(
+      name: name,
+      iterations: iterations,
+      primary: primaryResult,
+      noOp: noOpResult,
+      net: netResult,
+    );
   }
 
   Future<_MeasurementRun> _measureFunction(

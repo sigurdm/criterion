@@ -87,18 +87,32 @@ final class InstructionMeasurer {
     if (_syscall == null || _ioctl == null || _read == null || _close == null) {
       return false;
     }
-    try {
-      final file = File('/proc/sys/kernel/perf_event_paranoid');
-      if (file.existsSync()) {
-        final val = int.tryParse(file.readAsStringSync().trim());
-        if (val != null && val > 1) {
-          return false;
-        }
-      }
-    } catch (_) {
-      return false;
+
+    final syscallFn = _syscall!;
+    final closeFn = _close!;
+
+    final attrSize = 120;
+    final attr = calloc<Uint8>(attrSize);
+
+    // Set fields:
+    // type (uint32) at offset 0 -> 0 (PERF_TYPE_HARDWARE)
+    attr.cast<Uint32>().value = 0;
+    // size (uint32) at offset 4 -> attrSize (120)
+    (attr + 4).cast<Uint32>().value = attrSize;
+    // config (uint64) at offset 8 -> 0 (PERF_COUNT_HW_INSTRUCTIONS)
+    (attr + 8).cast<Uint64>().value = 0;
+    // flags (uint64) at offset 40 -> 97 (disabled=1, exclude_kernel=1, exclude_hv=1)
+    (attr + 40).cast<Uint64>().value = 97;
+
+    // Open the event (pid = 0 for calling process, cpu = -1 for any CPU)
+    final fd = syscallFn(_sysPerfEventOpen, attr.cast<Void>(), 0, -1, -1, 0);
+    calloc.free(attr);
+
+    if (fd >= 0) {
+      closeFn(fd);
+      return true;
     }
-    return true;
+    return false;
   }
 
   /// Measures CPU instructions for [fn] over [iterations] runs.
