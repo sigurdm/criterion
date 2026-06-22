@@ -3,7 +3,7 @@
 [![pub package](https://img.shields.io/pub/v/criterion.svg)](https://pub.dev/packages/criterion)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
-A high-performance, statistically robust benchmarking framework for Dart, heavily inspired by Rust's `criterion.rs`.
+A high-performance, statistically robust benchmarking framework for Dart, heavily inspired by Rust's `criterion.rs` (which in turn was inspired by Haskell's original `criterion` library).
 
 Unlike simple timing loops, `criterion` accounts for the unique characteristics of the Dart Virtual Machine (VM)—such as JIT compilation, garbage collection, and native FFI transition overheads—to deliver extremely precise, reproducible, and detailed performance insights.
 
