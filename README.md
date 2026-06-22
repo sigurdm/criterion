@@ -1,29 +1,20 @@
 # Criterion
 
-[![pub package](https://img.shields.io/pub/v/criterion.svg)](https://pub.dev/packages/criterion)
-[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
+A benchmarking framework for Dart, inspired by Rust's `criterion.rs` and the Haskell `criterion` package.
 
-A high-performance, statistically robust benchmarking framework for Dart, heavily inspired by Rust's `criterion.rs` (which in turn was inspired by Haskell's original `criterion` library).
+Criterion helps you write precise benchmarks by accounting for JIT warm-up, garbage collection, and system noise.
 
-Unlike simple timing loops, `criterion` accounts for the unique characteristics of the Dart Virtual Machine (VM)—such as JIT compilation, garbage collection, and native FFI transition overheads—to deliver extremely precise, reproducible, and detailed performance insights.
+## Features
 
----
+*   **Statistical analysis**: Uses bootstrapping to estimate 95% confidence intervals for both mean and median execution times.
+*   **Outlier detection**: Identifies outliers and estimates how much they affect the variance of the measurements.
+*   **Warm-up and calibration**: Runs a warm-up phase to allow the Dart VM to JIT-compile and optimize the code, and calibrates the number of iterations per sample to overcome clock resolution limits.
+*   **Memory tracking**: Measures allocated bytes, the number of allocated Dart objects, and RSS delta per iteration using the Dart VM Service.
+*   **Instruction counting**: Measures CPU instructions executed per iteration on Linux (requires performance counter access).
+*   **Overhead calibration**: Subtracts a baseline `noOp` execution (e.g., an empty FFI call) to measure the net performance of your code.
+*   **HTML & JSON output**: Generates interactive HTML reports with performance charts and exports raw results to JSON.
 
-## Key Features
-
-*   📊 **Statistical Rigor & Bootstrapping**: Calculates 95% confidence intervals for both mean and median execution times using bootstrap resampling. This prevents temporary system noise or GC pauses from skewing your results.
-*   🔍 **Outlier Analysis**: Identifies mild and severe outliers, reporting the percentage of variance in your benchmarks caused by them.
-*   ⚡ **JIT-Aware Warm-up**: Automatically warms up your functions before taking measurements, ensuring that the Dart VM JIT-compiles and optimizes the code before it is timed.
-*   ⚖️ **Automated Calibration**: Automatically determines the optimal number of iterations per sample to ensure measurements are well above the system clock's resolution.
-*   💾 **Granular Memory Tracking**: Reports allocated bytes, the number of allocated Dart objects, and Resident Set Size (RSS) delta per iteration, using the Dart VM Service.
-*   🦾 **Hardware Instruction Counting**: Measures the exact number of CPU instructions executed per iteration on Linux systems (requires `perf_event_paranoid` configuration).
-*   🎯 **FFI & Overhead Calibration (`noOp`)**: Allows you to specify a "no-op" baseline function. Criterion will measure its performance and automatically subtract the call/bridge overhead, providing the **Net** time, memory, and instruction counts of your core logic.
-*   📈 **Interactive HTML Reports**: Automatically generates stunning, interactive HTML reports with charts and detailed tables in `benchmark/report/`.
-*   📥 **JSON Exports**: Exports raw benchmark data as JSON for CI/CD integration and historical tracking.
-
----
-
-## Getting Started
+## Getting started
 
 Add `criterion` to your `dev_dependencies` in your `pubspec.yaml`:
 
@@ -32,13 +23,11 @@ dev_dependencies:
   criterion: ^1.0.0
 ```
 
----
+## Usage
 
-## Usage Examples
+### Basic benchmark
 
-### 1. Basic Benchmarking
-
-Create a benchmark file, e.g., `benchmark/my_benchmark.dart`:
+Define a suite and register benchmarks using `c.bench`:
 
 ```dart
 import 'package:criterion/criterion.dart';
@@ -49,7 +38,6 @@ int fib(int n) {
 }
 
 void main() async {
-  // Define a benchmark suite
   await criterion('Fibonacci', (c) {
     c.bench('fib(10)', () {
       fib(10);
@@ -62,14 +50,14 @@ void main() async {
 }
 ```
 
-Run it using the Dart VM:
+Run the benchmark with the Dart VM:
 ```bash
 dart benchmark/my_benchmark.dart
 ```
 
-### 2. Grouping Benchmarks
+### Grouping benchmarks
 
-You can group related benchmarks together to make the output and HTML reports easier to compare:
+You can group related benchmarks to organize the console output and HTML reports:
 
 ```dart
 import 'package:criterion/criterion.dart';
@@ -96,21 +84,19 @@ void main() async {
 }
 ```
 
-### 3. FFI Overhead & Boundary Calibration
+### FFI Overhead Calibration
 
-When benchmarking Dart FFI calls, the transition overhead of the FFI bridge itself can often dominate micro-benchmarks. Criterion allows you to pass a `noOp` function (e.g., an FFI call that does no work) to isolate and subtract the overhead.
+When benchmarking Dart FFI, the transition overhead of the FFI bridge itself can dominate micro-benchmarks. You can pass a `noOp` callback to measure and subtract this overhead.
 
 ```dart
 import 'dart:ffi';
 import 'package:criterion/criterion.dart';
 import 'package:ffi/ffi.dart';
 
-// Leaf FFI call to C strlen (highly optimized transition)
 @Native<UintPtr Function(Pointer<Char>)>(symbol: 'strlen', isLeaf: true)
 external int strlenLeaf(Pointer<Char> s);
 
 void main() async {
-  // Allocate native memory outside the benchmark loop to avoid measuring allocation cost.
   final str1000 = ('a' * 1000).toNativeUtf8();
   final strEmpty = ''.toNativeUtf8();
 
@@ -119,11 +105,9 @@ void main() async {
       c.bench(
         'strlen (1000 chars)',
         () {
-          // Main function: Leaf FFI call with 1000 iterations inside strlen
           strlenLeaf(str1000.cast<Char>());
         },
         noOp: () {
-          // Overhead function: Leaf FFI call with 0 iterations (returns immediately)
           strlenLeaf(strEmpty.cast<Char>());
         },
       );
@@ -135,7 +119,7 @@ void main() async {
 }
 ```
 
-#### Example Output:
+Output format:
 ```text
 === Running Suite: FFI Boundary Calibration ===
 Benchmarking strlen (1000 chars)...
@@ -146,11 +130,9 @@ Benchmarking strlen (1000 chars)...
   instructions: [Total: 412] [Overhead: 7] [Net: 405]
 ```
 
----
-
 ## Configuration
 
-You can customize the benchmark runner's behavior by passing a `CriterionConfig` to the `criterion` entrypoint:
+Configure the runner by passing a `CriterionConfig` instance:
 
 ```dart
 await criterion(
@@ -159,34 +141,30 @@ await criterion(
     // ...
   },
   config: CriterionConfig(
-    generateHtmlReport: true,        // Generate interactive HTML reports (default: true)
-    exportJson: true,                // Export raw JSON results (default: true)
+    generateHtmlReport: true,        // Generate HTML reports (default: true)
+    exportJson: true,                // Export JSON results (default: true)
     reportDir: 'benchmark/report',   // Output directory (default: 'benchmark/report')
   ),
 );
 ```
 
----
+## Instruction Counting on Linux
 
-## Advanced: Instruction Counting on Linux
+Measuring CPU instructions requires access to Linux performance counters. By default, Linux restricts this access for non-root users.
 
-To measure hardware CPU instructions, Criterion accesses Linux performance counters. By default, Linux restricts access to these counters for non-root users.
-
-To enable instruction counting, run the following command on your Linux host:
+To enable instruction counting:
 
 ```bash
 sudo sysctl kernel.perf_event_paranoid=1
 ```
 
-To make this change permanent, add the following line to `/etc/sysctl.conf`:
+To make this change persistent, add the following to `/etc/sysctl.conf`:
 
 ```text
 kernel.perf_event_paranoid=1
 ```
 
-If instruction counting is unsupported or disabled, Criterion will gracefully omit it from the report.
-
----
+If performance counters are not accessible, Criterion will omit instruction counts from the output.
 
 ## License
 
