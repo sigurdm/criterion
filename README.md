@@ -50,7 +50,18 @@ void main() async {
 }
 ```
 
-Run the benchmark with the Dart VM:
+### Running Benchmarks
+
+#### AOT Mode (Recommended)
+To measure performance under production-like AOT (Ahead-Of-Time) compilation, use the provided runner. This automatically compiles your benchmark to a temporary native binary, executes it, and cleans up the binary afterward:
+
+```bash
+dart run criterion:run benchmark/my_benchmark.dart
+```
+
+#### JIT Mode
+Alternatively, you can run the benchmark directly in JIT (Just-In-Time) mode using the Dart VM:
+
 ```bash
 dart benchmark/my_benchmark.dart
 ```
