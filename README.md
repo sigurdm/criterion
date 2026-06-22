@@ -84,9 +84,11 @@ void main() async {
 }
 ```
 
-### FFI Overhead Calibration
+### Overhead Calibration
 
-When benchmarking Dart FFI, the transition overhead of the FFI bridge itself can dominate micro-benchmarks. You can pass a `noOp` callback to measure and subtract this overhead.
+When measuring micro-benchmarks, the overhead of the function call harness or loop structure can sometimes skew the results. You can pass a `noOp` callback to measure and subtract this baseline overhead from the primary benchmark.
+
+A common use case is measuring and subtracting the transition overhead of Dart FFI:
 
 ```dart
 import 'dart:ffi';
