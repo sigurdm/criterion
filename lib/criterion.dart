@@ -20,6 +20,4 @@ export 'src/config.dart';
 export 'src/result.dart';
 export 'src/statistics.dart'
     show Sample, ConfidenceInterval, BootstrapResult, OutlierAnalysis;
-export "src/memory_measurement.dart" show MemoryResult;
-export "src/instruction_measurement.dart" show InstructionResult;
 export "src/comparison.dart";

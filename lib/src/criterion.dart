@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+import 'dart:convert';
+import 'dart_environment.dart' as env;
 import 'statistics.dart';
 import 'memory_measurement.dart';
 import 'instruction_measurement.dart';
@@ -26,7 +28,9 @@ Future<List<BenchmarkResult>> criterion(
   void Function(Criterion c) body, {
   CriterionConfig config = const CriterionConfig(),
 }) async {
-  print('=== Running Suite: $suiteName ===');
+  if (!env.isJson) {
+    print('=== Running Suite: $suiteName ===');
+  }
   final c = Criterion(config: config);
   body(c);
   return await c.run();
@@ -76,6 +80,33 @@ final class Criterion {
     _groupPath.removeLast();
   }
 
+  /// Registers a group of benchmark variants.
+  void variants(
+    String groupName,
+    Map<String, void Function()> variants, {
+    int samples = 100,
+    Duration warmupDuration = const Duration(seconds: 1),
+  }) {
+    final baseName = _groupPath.isEmpty
+        ? groupName
+        : '${_groupPath.join(" / ")} / $groupName';
+
+    variants.forEach((variantName, fn) {
+      final fullName = '$baseName / $variantName';
+      _benchmarks.add(
+        Benchmark(
+          fullName,
+          fn,
+          config: config,
+          samples: samples,
+          warmupDuration: warmupDuration,
+          variantGroup: groupName,
+          variantName: variantName,
+        ),
+      );
+    });
+  }
+
   /// Runs all registered benchmarks and reports their results.
   Future<List<BenchmarkResult>> run() async {
     final results = <BenchmarkResult>[];
@@ -83,8 +114,87 @@ final class Criterion {
       final result = await benchmark.run();
       results.add(result);
     }
-    await ReportGenerator(config).generate(results);
+    if (env.isJson) {
+      print(jsonEncode(results.map((r) => r.toJson()).toList()));
+    } else {
+      await ReportGenerator(config).generate(results);
+      _printVariantComparisons(results);
+    }
     return results;
+  }
+
+  void _printVariantComparisons(List<BenchmarkResult> results) {
+    if (env.isJson) return;
+
+    final groups = <String, List<BenchmarkResult>>{};
+    for (final r in results) {
+      if (r.variantGroup != null) {
+        groups.putIfAbsent(r.variantGroup!, () => []).add(r);
+      }
+    }
+
+    if (groups.isEmpty) return;
+
+    for (final entry in groups.entries) {
+      final groupName = entry.key;
+      final groupResults = entry.value;
+      if (groupResults.isEmpty) continue;
+
+      print('=== Variant Comparison: $groupName ===');
+      print('| Variant | Time | Relative Speed | Significant? |');
+      print('| --- | --- | --- | --- |');
+
+      final baseline = groupResults.first;
+      final baselineName = baseline.variantName ?? baseline.name;
+      final baselineTime = baseline.primary.mean;
+
+      print(
+        '| $baselineName (baseline) | ${Benchmark.formatDuration(baselineTime)} | 1.00x | - |',
+      );
+
+      for (var i = 1; i < groupResults.length; i++) {
+        final current = groupResults[i];
+        final currentName = current.variantName ?? current.name;
+        final currentTime = current.primary.mean;
+
+        final relativeSpeedStr = _formatRelativeSpeed(
+          baselineTime,
+          currentTime,
+        );
+
+        final significant = _isSignificant(
+          baseline.primary.meanCI,
+          current.primary.meanCI,
+        );
+        final significantStr = significant ? 'Yes' : 'No';
+
+        print(
+          '| $currentName | ${Benchmark.formatDuration(currentTime)} | $relativeSpeedStr | $significantStr |',
+        );
+      }
+      print('');
+    }
+  }
+
+  String _formatRelativeSpeed(double baselineMean, double variantMean) {
+    if (variantMean == 0 && baselineMean == 0) return '1.00x';
+    if (variantMean == 0) return 'Infinityx (faster)';
+    if (baselineMean == 0) return 'Infinityx (slower)';
+    final factor = baselineMean / variantMean;
+    final factorStr = factor.toStringAsFixed(2);
+    if (factorStr == '1.00') {
+      return '1.00x';
+    }
+    if (factor > 1.0) {
+      return '${factorStr}x (faster)';
+    } else {
+      final slowerFactor = 1 / factor;
+      return '${slowerFactor.toStringAsFixed(2)}x (slower)';
+    }
+  }
+
+  bool _isSignificant(ConfidenceInterval a, ConfidenceInterval b) {
+    return a.upperBound < b.lowerBound || b.upperBound < a.lowerBound;
   }
 }
 
@@ -108,6 +218,12 @@ final class Benchmark {
   /// The configuration for this benchmark.
   final CriterionConfig config;
 
+  /// The variant group name, if this benchmark is part of a variant group.
+  final String? variantGroup;
+
+  /// The variant name, if this benchmark is part of a variant group.
+  final String? variantName;
+
   /// Creates a [Benchmark].
   Benchmark(
     this.name,
@@ -116,12 +232,16 @@ final class Benchmark {
     this.noOp,
     this.samples = 100,
     this.warmupDuration = const Duration(seconds: 1),
+    this.variantGroup,
+    this.variantName,
   });
 
   /// Executes the warm-up, calibration, sampling, statistical analysis,
   /// and outputs the report.
   Future<BenchmarkResult> run() async {
-    print('Benchmarking $name...');
+    if (!env.isJson) {
+      print('Benchmarking $name...');
+    }
 
     final hasNoOp = noOp != null;
 
@@ -138,11 +258,15 @@ final class Benchmark {
     int? noOpIterations;
     if (hasNoOp) {
       noOpIterations = _calibrate(noOp!);
-      print(
-        '  Calibrated to $iterations iterations per sample (no-op: $noOpIterations).',
-      );
+      if (!env.isJson) {
+        print(
+          '  Calibrated to $iterations iterations per sample (no-op: $noOpIterations).',
+        );
+      }
     } else {
-      print('  Calibrated to $iterations iterations per sample.');
+      if (!env.isJson) {
+        print('  Calibrated to $iterations iterations per sample.');
+      }
     }
 
     // 3. Run measurements
@@ -153,12 +277,18 @@ final class Benchmark {
     }
 
     // 4. Report
-    _report(mainRun, noOpRun);
+    if (!env.isJson) {
+      _report(mainRun, noOpRun);
+    }
 
     // 5. Output warning footnote if instructions are unsupported (one-time)
-    _checkAndPrintFootnote();
+    if (!env.isJson) {
+      _checkAndPrintFootnote();
+    }
 
-    print(''); // Empty line after each benchmark
+    if (!env.isJson) {
+      print(''); // Empty line after each benchmark
+    }
 
     return _createResult(iterations, mainRun, noOpRun);
   }
@@ -241,6 +371,8 @@ final class Benchmark {
       primary: primaryResult,
       noOp: noOpResult,
       net: netResult,
+      variantGroup: variantGroup,
+      variantName: variantName,
     );
   }
 
@@ -398,9 +530,11 @@ final class Benchmark {
       }
     }
 
-    print(
-      '  Warning: Benchmark $name did not converge after $maxSamples samples.',
-    );
+    if (!env.isJson) {
+      print(
+        '  Warning: Benchmark $name did not converge after $maxSamples samples.',
+      );
+    }
     return bestWindow ?? slidingBuffer.sublist(w, w * 2);
   }
 

@@ -11,6 +11,8 @@ dependencies:
   ffi: ^2.2.0
   vm_service: ^15.2.0
   path: ^1.9.0
+  args: ^2.5.0
+  node_preamble: ^2.0.2
 
 dev_dependencies:
   lints: ^6.0.0
