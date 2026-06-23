@@ -123,5 +123,184 @@ void main() {
       final htmlFile = File('${tempDir.path}/index.html');
       expect(htmlFile.existsSync(), isFalse);
     });
+
+    test('JSON roundtrip deserialization', () async {
+      final config = CriterionConfig(
+        reportDir: tempDir.path,
+        generateHtmlReport: false,
+        exportJson: true,
+      );
+
+      final originalResults = await criterion('Test Suite', (c) {
+        c.bench(
+          'bench1',
+          () {},
+          samples: 5,
+          warmupDuration: const Duration(milliseconds: 5),
+        );
+      }, config: config);
+
+      expect(originalResults.length, equals(1));
+      final original = originalResults.first;
+
+      final jsonFile = File('${tempDir.path}/results.json');
+      expect(jsonFile.existsSync(), isTrue);
+
+      final jsonContent = jsonFile.readAsStringSync();
+      final decodedList = jsonDecode(jsonContent) as List;
+      expect(decodedList.length, equals(1));
+
+      final deserialized = BenchmarkResult.fromJson(
+        decodedList.first as Map<String, dynamic>,
+      );
+
+      expect(deserialized.name, equals(original.name));
+      expect(deserialized.iterations, equals(original.iterations));
+      _compareMeasurementResults(deserialized.primary, original.primary);
+      expect(deserialized.noOp, isNull);
+      expect(deserialized.net, isNull);
+    });
+
+    test('JSON roundtrip deserialization with noOp calibration', () async {
+      final config = CriterionConfig(
+        reportDir: tempDir.path,
+        generateHtmlReport: false,
+        exportJson: true,
+      );
+
+      final originalResults = await criterion('Test Suite FFI', (c) {
+        c.bench(
+          'ffi-mock',
+          () {
+            var sum = 0;
+            for (var i = 0; i < 1000; i++) {
+              sum += i;
+            }
+            if (sum == 0) throw StateError('invalid sum');
+          },
+          noOp: () {
+            // Simulate no-op
+          },
+          samples: 5,
+          warmupDuration: const Duration(milliseconds: 5),
+        );
+      }, config: config);
+
+      expect(originalResults.length, equals(1));
+      final original = originalResults.first;
+
+      final jsonFile = File('${tempDir.path}/results.json');
+      expect(jsonFile.existsSync(), isTrue);
+
+      final jsonContent = jsonFile.readAsStringSync();
+      final decodedList = jsonDecode(jsonContent) as List;
+      expect(decodedList.length, equals(1));
+
+      final deserialized = BenchmarkResult.fromJson(
+        decodedList.first as Map<String, dynamic>,
+      );
+
+      expect(deserialized.name, equals(original.name));
+      expect(deserialized.iterations, equals(original.iterations));
+      _compareMeasurementResults(deserialized.primary, original.primary);
+
+      expect(original.noOp, isNotNull);
+      expect(deserialized.noOp, isNotNull);
+      _compareMeasurementResults(deserialized.noOp!, original.noOp!);
+
+      expect(original.net, isNotNull);
+      expect(deserialized.net, isNotNull);
+      _compareNetResults(deserialized.net, original.net);
+    });
   });
+}
+
+void _compareMeasurementResults(
+  MeasurementResult actual,
+  MeasurementResult expected,
+) {
+  expect(actual.sampleTimes, equals(expected.sampleTimes));
+  expect(actual.mean, closeTo(expected.mean, 1e-9));
+  expect(actual.median, closeTo(expected.median, 1e-9));
+  expect(actual.stdDev, closeTo(expected.stdDev, 1e-9));
+
+  expect(actual.meanCI.lowerBound, closeTo(expected.meanCI.lowerBound, 1e-9));
+  expect(actual.meanCI.upperBound, closeTo(expected.meanCI.upperBound, 1e-9));
+  expect(
+    actual.medianCI.lowerBound,
+    closeTo(expected.medianCI.lowerBound, 1e-9),
+  );
+  expect(
+    actual.medianCI.upperBound,
+    closeTo(expected.medianCI.upperBound, 1e-9),
+  );
+
+  expect(actual.outliers.lowSevere, equals(expected.outliers.lowSevere));
+  expect(actual.outliers.lowMild, equals(expected.outliers.lowMild));
+  expect(actual.outliers.highMild, equals(expected.outliers.highMild));
+  expect(actual.outliers.highSevere, equals(expected.outliers.highSevere));
+  expect(
+    actual.outliers.outlierVariancePercentage,
+    closeTo(expected.outliers.outlierVariancePercentage, 1e-9),
+  );
+
+  if (expected.memory != null) {
+    expect(actual.memory, isNotNull);
+    if (expected.memory!.allocatedBytesPerIteration == null) {
+      expect(actual.memory!.allocatedBytesPerIteration, isNull);
+    } else {
+      expect(
+        actual.memory!.allocatedBytesPerIteration,
+        closeTo(expected.memory!.allocatedBytesPerIteration!, 1e-9),
+      );
+    }
+    if (expected.memory!.allocatedObjectsPerIteration == null) {
+      expect(actual.memory!.allocatedObjectsPerIteration, isNull);
+    } else {
+      expect(
+        actual.memory!.allocatedObjectsPerIteration,
+        closeTo(expected.memory!.allocatedObjectsPerIteration!, 1e-9),
+      );
+    }
+    expect(
+      actual.memory!.rssDeltaBytes,
+      equals(expected.memory!.rssDeltaBytes),
+    );
+  } else {
+    expect(actual.memory, isNull);
+  }
+
+  if (expected.instructions != null) {
+    expect(actual.instructions, isNotNull);
+    expect(
+      actual.instructions!.instructionsPerIteration,
+      closeTo(expected.instructions!.instructionsPerIteration, 1e-9),
+    );
+  } else {
+    expect(actual.instructions, isNull);
+  }
+}
+
+void _compareNetResults(NetResult? actual, NetResult? expected) {
+  if (expected == null) {
+    expect(actual, isNull);
+    return;
+  }
+  expect(actual, isNotNull);
+  expect(actual!.timeNs, closeTo(expected.timeNs, 1e-9));
+  if (expected.allocatedBytes == null) {
+    expect(actual.allocatedBytes, isNull);
+  } else {
+    expect(actual.allocatedBytes, closeTo(expected.allocatedBytes!, 1e-9));
+  }
+  if (expected.allocatedObjects == null) {
+    expect(actual.allocatedObjects, isNull);
+  } else {
+    expect(actual.allocatedObjects, closeTo(expected.allocatedObjects!, 1e-9));
+  }
+  if (expected.instructions == null) {
+    expect(actual.instructions, isNull);
+  } else {
+    expect(actual.instructions, closeTo(expected.instructions!, 1e-9));
+  }
 }

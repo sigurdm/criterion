@@ -91,6 +91,14 @@ final class InstructionResult {
 
   /// Creates an [InstructionResult].
   InstructionResult({required this.instructionsPerIteration});
+
+  /// Creates an [InstructionResult] from a JSON map.
+  factory InstructionResult.fromJson(Map<String, dynamic> json) {
+    return InstructionResult(
+      instructionsPerIteration: (json["instructionsPerIteration"] as num)
+          .toDouble(),
+    );
+  }
 }
 
 /// Helper to perform hardware CPU instruction measurements using Linux perf events.

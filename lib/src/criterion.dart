@@ -16,6 +16,7 @@ import 'statistics.dart';
 import 'memory_measurement.dart';
 import 'instruction_measurement.dart';
 import 'config.dart';
+import 'kbssd_math.dart';
 import 'result.dart';
 import 'report_generator.dart';
 
@@ -60,6 +61,7 @@ final class Criterion {
       Benchmark(
         fullName,
         fn,
+        config: config,
         samples: samples,
         warmupDuration: warmupDuration,
         noOp: noOp,
@@ -103,10 +105,14 @@ final class Benchmark {
   /// The duration of the warm-up phase.
   final Duration warmupDuration;
 
+  /// The configuration for this benchmark.
+  final CriterionConfig config;
+
   /// Creates a [Benchmark].
   Benchmark(
     this.name,
     this.fn, {
+    this.config = const CriterionConfig(),
     this.noOp,
     this.samples = 100,
     this.warmupDuration = const Duration(seconds: 1),
@@ -120,9 +126,11 @@ final class Benchmark {
     final hasNoOp = noOp != null;
 
     // 1. Warm-up
-    _warmup(fn);
-    if (hasNoOp) {
-      _warmup(noOp!);
+    if (!config.useKbssd) {
+      _warmup(fn);
+      if (hasNoOp) {
+        _warmup(noOp!);
+      }
     }
 
     // 2. Calibration
@@ -241,7 +249,12 @@ final class Benchmark {
     int iterations,
   ) async {
     // Sampling
-    final sampleTimes = _collectSamples(targetFn, iterations);
+    final List<double> sampleTimes;
+    if (config.useKbssd) {
+      sampleTimes = _collectSamplesKbssd(targetFn, iterations);
+    } else {
+      sampleTimes = _collectSamples(targetFn, iterations);
+    }
 
     // Statistical Analysis
     final sample = Sample(sampleTimes);
@@ -316,6 +329,81 @@ final class Benchmark {
     return times;
   }
 
+  List<double> _collectSamplesKbssd(void Function() targetFn, int iterations) {
+    final w = config.kbssdWindowSize;
+    final maxSamples = config.kbssdMaxSamples;
+    final stabilityRequired = config.kbssdStabilityRequired;
+    final trimPct = config.kbssdTrimPercentage;
+    final scale = config.kbssdScaleFactor;
+
+    // 1. Fill cold buffer of size w * 2
+    final coldBuffer = <double>[];
+    for (var i = 0; i < w * 2; i++) {
+      final totalNs = _measureIterations(targetFn, iterations);
+      coldBuffer.add(totalNs / iterations);
+    }
+
+    // 2. Calculate dynamic convergence threshold
+    final coldSample = Sample(coldBuffer);
+    final coldMedian = coldSample.median;
+    final coldMad = calculateMAD(coldBuffer, coldMedian);
+    final relativeMad = coldMedian == 0.0 ? 0.0 : coldMad / coldMedian;
+    final threshold = relativeMad * scale;
+
+    var sigma = populationStandardDeviation(coldBuffer);
+    if (sigma == 0.0) {
+      sigma = 1e-9;
+    }
+
+    final slidingBuffer = List<double>.from(coldBuffer);
+    var stableCount = 0;
+    List<double>? bestWindow;
+    double minMmd = double.infinity;
+
+    for (var s = w * 2; s < maxSamples; s++) {
+      final totalNs = _measureIterations(targetFn, iterations);
+      final newSample = totalNs / iterations;
+
+      slidingBuffer.add(newSample);
+      slidingBuffer.removeAt(0);
+
+      final past = slidingBuffer.sublist(0, w);
+      final present = slidingBuffer.sublist(w, w * 2);
+
+      final trimmedPast = trimWindow(past, trimPct);
+      final trimmedPresent = trimWindow(present, trimPct);
+
+      double mmd;
+      if (trimmedPast.isEmpty || trimmedPresent.isEmpty) {
+        mmd = double.infinity;
+      } else {
+        mmd = calculateMMD(trimmedPast, trimmedPresent, sigma);
+      }
+
+      final isStable = mmd < threshold || checkSEM(present);
+
+      if (isStable) {
+        stableCount++;
+      } else {
+        stableCount = 0;
+      }
+
+      if (mmd < minMmd) {
+        minMmd = mmd;
+        bestWindow = List<double>.from(present);
+      }
+
+      if (stableCount >= stabilityRequired) {
+        return present;
+      }
+    }
+
+    print(
+      '  Warning: Benchmark $name did not converge after $maxSamples samples.',
+    );
+    return bestWindow ?? slidingBuffer.sublist(w, w * 2);
+  }
+
   void _report(_MeasurementRun mainRun, _MeasurementRun? noOpRun) {
     if (noOpRun == null) {
       final sample = mainRun.sample;
@@ -345,7 +433,8 @@ final class Benchmark {
       );
 
       final totalOutliers = outliers.totalOutliers;
-      final percent = (totalOutliers / samples) * 100.0;
+      final actualSamples = sample.values.length;
+      final percent = (totalOutliers / actualSamples) * 100.0;
       final varPct = outliers.outlierVariancePercentage;
 
       String effect;
@@ -361,7 +450,7 @@ final class Benchmark {
 
       if (totalOutliers > 0) {
         print(
-          '  outliers: $totalOutliers/$samples outliers detected (${percent.toStringAsFixed(1)}%). '
+          '  outliers: $totalOutliers/${sample.length} outliers detected (${percent.toStringAsFixed(1)}%). '
           'Variance due to outliers: ${varPct.toStringAsFixed(1)}% ($effect)',
         );
       } else {

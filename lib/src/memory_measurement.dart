@@ -34,6 +34,17 @@ final class MemoryResult {
     required this.allocatedObjectsPerIteration,
     required this.rssDeltaBytes,
   });
+
+  /// Creates a [MemoryResult] from a JSON map.
+  factory MemoryResult.fromJson(Map<String, dynamic> json) {
+    return MemoryResult(
+      allocatedBytesPerIteration: (json["allocatedBytesPerIteration"] as num?)
+          ?.toDouble(),
+      allocatedObjectsPerIteration:
+          (json["allocatedObjectsPerIteration"] as num?)?.toDouble(),
+      rssDeltaBytes: json["rssDeltaBytes"] as int,
+    );
+  }
 }
 
 /// Helper to perform memory measurements using the VM Service.

@@ -23,10 +23,34 @@ final class CriterionConfig {
   /// The directory where the reports will be written.
   final String reportDir;
 
+  /// Whether to use Kernel-Based Steady-State Detection (KBSSD) for adaptive benchmarking.
+  final bool useKbssd;
+
+  /// The size of the sliding windows used in KBSSD.
+  final int kbssdWindowSize;
+
+  /// The number of consecutive stable samples required to declare convergence.
+  final int kbssdStabilityRequired;
+
+  /// The percentage of extreme values to trim from the windows.
+  final double kbssdTrimPercentage;
+
+  /// The scale factor applied to the relative MAD of the cold buffer to determine the threshold.
+  final double kbssdScaleFactor;
+
+  /// The maximum number of samples to collect before giving up.
+  final int kbssdMaxSamples;
+
   /// Creates a new [CriterionConfig] instance.
   const CriterionConfig({
     this.generateHtmlReport = true,
     this.exportJson = true,
     this.reportDir = 'benchmark/report',
+    this.useKbssd = false,
+    this.kbssdWindowSize = 15,
+    this.kbssdStabilityRequired = 8,
+    this.kbssdTrimPercentage = 0.10,
+    this.kbssdScaleFactor = 2.0,
+    this.kbssdMaxSamples = 200,
   });
 }

@@ -161,6 +161,53 @@ await criterion(
 );
 ```
 
+## Comparing Implementations
+
+Criterion supports comparing benchmark results across different runs or different git branches/references.
+
+### 1. Comparing JSON Results
+
+If you have already run benchmarks and saved the JSON results, you can compare them using the `compare` tool:
+
+```bash
+dart run criterion:compare path/to/before.json path/to/after.json
+```
+
+This will output a Markdown table comparing execution time, memory usage, and CPU instruction counts (if available). 
+
+For execution time, Criterion performs a statistical significance test by checking if the 95% confidence intervals of the runs overlap. If they do not overlap, the change is marked as significant.
+
+### 2. Automating Git Reference Comparison
+
+You can automate comparing two different git references (branches, tags, or commits) using the `compare_git` tool. This tool checks out both references to temporary worktrees, runs the benchmark in each, and outputs the comparison report:
+
+```bash
+dart run criterion:compare_git <ref1> <ref2> benchmark/my_benchmark.dart [extra_args...]
+```
+
+Example comparing a feature branch to `main`:
+```bash
+dart run criterion:compare_git main feature-branch benchmark/my_benchmark.dart
+```
+
+*Note: The target benchmark file does not need to be committed in both references; the tool will copy the benchmark file from your active workspace to the temporary worktrees.*
+
+---
+
+## Sample HTML Reports
+
+Criterion generates rich interactive HTML reports (configured by default to `benchmark/report/index.html`).
+
+### Single Benchmark Report
+Shows the summary table, time distribution (KDE), iteration variance (scatter plot), memory analysis, and FFI overhead analysis.
+
+![Single Benchmark Report](doc/images/single_report.jpg)
+
+### Comparison View
+Compare multiple benchmarks side-by-side (overlapping KDE time distribution and mean execution time bars).
+
+![Benchmark Comparison](doc/images/comparison_report.jpg)
+
 ## Instruction Counting on Linux
 
 Measuring CPU instructions requires access to Linux performance counters. By default, Linux restricts this access for non-root users.

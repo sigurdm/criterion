@@ -419,6 +419,59 @@ final class ReportGenerator {
             }
         });
 
+        // URL Parameter handling for automation/screenshots
+        const urlParams = new URLSearchParams(window.location.search);
+        
+        // Disable animations if requested
+        if (urlParams.get('animate') === 'false') {
+            Chart.defaults.animation = false;
+        }
+
+        const benchParam = urlParams.get('bench');
+        const compareParam = urlParams.get('compare');
+        const selectParam = urlParams.get('select');
+
+        if (compareParam === 'true') {
+            compareModeCheckbox.checked = true;
+            compareMode = true;
+            document.getElementById('single-view').style.display = 'none';
+            document.getElementById('comparison-view').style.display = 'block';
+            
+            if (selectParam) {
+                const indices = selectParam.split(',').map(s => s.trim());
+                indices.forEach(idxOrName => {
+                    let index = parseInt(idxOrName, 10);
+                    if (isNaN(index)) {
+                        index = data.findIndex(b => b.name === idxOrName);
+                    }
+                    if (index >= 0 && index < data.length) {
+                        document.getElementById(`bench-\${index}`).checked = true;
+                        selectedBenchmarks.push(data[index]);
+                    }
+                });
+                updateComparisonView();
+            }
+        } else if (benchParam) {
+            let index = parseInt(benchParam, 10);
+            if (isNaN(index)) {
+                index = data.findIndex(b => b.name === benchParam);
+            }
+            if (index >= 0 && index < data.length) {
+                document.getElementById(`bench-\${index}`).checked = true;
+                selectedBenchmarks = [data[index]];
+                activeBenchmark = data[index];
+                updateSingleView();
+            }
+        } else {
+            // Default to select first benchmark if nothing specified
+            if (data.length > 0) {
+                document.getElementById('bench-0').checked = true;
+                selectedBenchmarks = [data[0]];
+                activeBenchmark = data[0];
+                updateSingleView();
+            }
+        }
+
         function updateSingleView() {
             if (!activeBenchmark) {
                 document.getElementById('active-benchmark-name').innerText = 'Select a benchmark';

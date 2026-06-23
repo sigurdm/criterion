@@ -58,6 +58,35 @@ final class MeasurementResult {
     this.instructions,
   });
 
+  /// Creates a [MeasurementResult] from a JSON map.
+  factory MeasurementResult.fromJson(Map<String, dynamic> json) {
+    return MeasurementResult(
+      sampleTimes: (json["sampleTimes"] as List)
+          .map((e) => (e as num).toDouble())
+          .toList(),
+      mean: (json["mean"] as num).toDouble(),
+      median: (json["median"] as num).toDouble(),
+      stdDev: (json["stdDev"] as num).toDouble(),
+      meanCI: ConfidenceInterval.fromJson(
+        json["meanCI"] as Map<String, dynamic>,
+      ),
+      medianCI: ConfidenceInterval.fromJson(
+        json["medianCI"] as Map<String, dynamic>,
+      ),
+      outliers: OutlierAnalysis.fromJson(
+        json["outliers"] as Map<String, dynamic>,
+      ),
+      memory: json["memory"] != null
+          ? MemoryResult.fromJson(json["memory"] as Map<String, dynamic>)
+          : null,
+      instructions: json["instructions"] != null
+          ? InstructionResult.fromJson(
+              json["instructions"] as Map<String, dynamic>,
+            )
+          : null,
+    );
+  }
+
   /// Converts this result to a JSON-encodable map.
   Map<String, dynamic> toJson() {
     return {
@@ -116,6 +145,16 @@ final class NetResult {
     this.instructions,
   });
 
+  /// Creates a [NetResult] from a JSON map.
+  factory NetResult.fromJson(Map<String, dynamic> json) {
+    return NetResult(
+      timeNs: (json["timeNs"] as num).toDouble(),
+      allocatedBytes: (json["allocatedBytes"] as num?)?.toDouble(),
+      allocatedObjects: (json["allocatedObjects"] as num?)?.toDouble(),
+      instructions: (json["instructions"] as num?)?.toDouble(),
+    );
+  }
+
   /// Converts this result to a JSON-encodable map.
   Map<String, dynamic> toJson() {
     return {
@@ -152,6 +191,23 @@ final class BenchmarkResult {
     this.noOp,
     this.net,
   });
+
+  /// Creates a [BenchmarkResult] from a JSON map.
+  factory BenchmarkResult.fromJson(Map<String, dynamic> json) {
+    return BenchmarkResult(
+      name: json["name"] as String,
+      iterations: json["iterations"] as int,
+      primary: MeasurementResult.fromJson(
+        json["primary"] as Map<String, dynamic>,
+      ),
+      noOp: json["noOp"] != null
+          ? MeasurementResult.fromJson(json["noOp"] as Map<String, dynamic>)
+          : null,
+      net: json["net"] != null
+          ? NetResult.fromJson(json["net"] as Map<String, dynamic>)
+          : null,
+    );
+  }
 
   /// Converts this result to a JSON-encodable map.
   Map<String, dynamic> toJson() {

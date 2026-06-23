@@ -203,6 +203,14 @@ final class ConfidenceInterval {
   /// Creates a [ConfidenceInterval].
   ConfidenceInterval({required this.lowerBound, required this.upperBound});
 
+  /// Creates a [ConfidenceInterval] from a JSON map.
+  factory ConfidenceInterval.fromJson(Map<String, dynamic> json) {
+    return ConfidenceInterval(
+      lowerBound: (json["lowerBound"] as num).toDouble(),
+      upperBound: (json["upperBound"] as num).toDouble(),
+    );
+  }
+
   @override
   String toString() =>
       '[${lowerBound.toStringAsFixed(2)}, ${upperBound.toStringAsFixed(2)}]';
@@ -256,6 +264,18 @@ final class OutlierAnalysis {
     required this.highSevere,
     required this.outlierVariancePercentage,
   });
+
+  /// Creates an [OutlierAnalysis] from a JSON map.
+  factory OutlierAnalysis.fromJson(Map<String, dynamic> json) {
+    return OutlierAnalysis(
+      lowSevere: json["lowSevere"] as int,
+      lowMild: json["lowMild"] as int,
+      highMild: json["highMild"] as int,
+      highSevere: json["highSevere"] as int,
+      outlierVariancePercentage: (json["outlierVariancePercentage"] as num)
+          .toDouble(),
+    );
+  }
 
   /// The total number of detected outliers.
   int get totalOutliers => lowSevere + lowMild + highMild + highSevere;
