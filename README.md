@@ -21,11 +21,10 @@ Criterion helps write precise benchmarks by accounting for JIT warm-up, garbage 
 
 ## Getting Started
 
-Add `criterion` to your `dev_dependencies`:
+Add `criterion` to your development dependencies:
 
-```yaml
-dev_dependencies:
-  criterion: ^2.0.0
+```bash
+dart pub add dev:criterion
 ```
 
 ---
@@ -154,7 +153,7 @@ await criterion(
     reportDir: 'benchmark/report',
     
     // KBSSD (Kernel-Based Steady-State Detection)
-    useKbssd: false, // Use KBSSD instead of fixed warmup/samples
+    useKbssd: true,                  // Use KBSSD adaptive benchmarking (default: true)
     kbssdWindowSize: 15,
     kbssdStabilityRequired: 8,
   ),
@@ -162,7 +161,7 @@ await criterion(
 ```
 
 ### KBSSD Adaptive Benchmarking
-When `useKbssd` is enabled, Criterion uses KBSSD to detect convergence dynamically. It monitors a sliding window of measurements and stops when the variance stabilizes, saving time for fast-converging benchmarks while ensuring stability for noisy ones.
+By default, Criterion uses KBSSD to detect convergence dynamically. It monitors a sliding window of measurements and stops when the variance stabilizes, saving time for fast-converging benchmarks while ensuring stability for noisy ones. You can disable it by setting `useKbssd: false` in the configuration.
 
 ---
 

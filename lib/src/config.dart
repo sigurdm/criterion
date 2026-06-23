@@ -53,7 +53,7 @@ final class CriterionConfig {
     this.generateHtmlReport = true,
     this.exportJson = true,
     this.reportDir = 'benchmark/report',
-    this.useKbssd = false,
+    this.useKbssd = true,
     this.kbssdWindowSize = 15,
     this.kbssdStabilityRequired = 8,
     this.kbssdTrimPercentage = 0.10,

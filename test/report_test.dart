@@ -36,6 +36,7 @@ void main() {
         reportDir: tempDir.path,
         generateHtmlReport: true,
         exportJson: true,
+        useKbssd: false,
       );
 
       final results = await criterion('Test Suite', (c) {
