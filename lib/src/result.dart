@@ -13,6 +13,7 @@
 // limitations under the License.
 
 import "statistics.dart";
+import "throughput.dart";
 import "platform_info.dart" as platform_info;
 
 /// Represents the host environment where the benchmark was run.
@@ -243,6 +244,9 @@ final class BenchmarkResult {
   /// The variant name, if this benchmark is part of a variant group.
   final String? variantName;
 
+  /// The throughput configuration, if any.
+  final Throughput? throughput;
+
   /// Creates a new [BenchmarkResult].
   BenchmarkResult({
     required this.name,
@@ -255,6 +259,7 @@ final class BenchmarkResult {
     DateTime? timestamp,
     this.variantGroup,
     this.variantName,
+    this.throughput,
   }) : hostEnvironment = hostEnvironment ?? _defaultHostEnvironment(),
        platform =
            platform ??
@@ -294,12 +299,17 @@ final class BenchmarkResult {
       "timestamp": timestamp.toIso8601String(),
       if (variantGroup != null) "variantGroup": variantGroup,
       if (variantName != null) "variantName": variantName,
+      if (throughput != null) "throughput": throughput!.toJson(),
     };
   }
 
   /// Creates a [BenchmarkResult] from a JSON map.
   factory BenchmarkResult.fromJson(Map<String, dynamic> json) {
+    final throughputJson = json["throughput"] as Map<String, dynamic>?;
     return BenchmarkResult(
+      throughput: throughputJson == null
+          ? null
+          : Throughput.fromJson(throughputJson),
       name: json["name"] as String,
       iterations: json["iterations"] as int,
       primary: MeasurementResult.fromJson(

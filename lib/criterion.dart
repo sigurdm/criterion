@@ -16,6 +16,7 @@
 library;
 
 export 'src/criterion.dart';
+export 'src/throughput.dart';
 export 'src/config.dart';
 export 'src/result.dart';
 export 'src/blackhole.dart';

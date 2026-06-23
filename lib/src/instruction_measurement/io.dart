@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+import 'dart:async';
 import 'dart:ffi';
 import 'dart:io';
 import 'package:ffi/ffi.dart';
@@ -124,10 +125,11 @@ final class InstructionMeasurer {
   /// Measures CPU instructions for [fn] over [iterations] runs.
   ///
   /// Returns `null` if instruction counting is not supported or fails.
-  static InstructionResult? measure({
-    required void Function() fn,
+  static Future<InstructionResult?> measure({
+    required Function fn,
     required int iterations,
-  }) {
+    Function? setup,
+  }) async {
     if (!isSupported) return null;
 
     final syscallFn = _syscall!;
@@ -157,13 +159,31 @@ final class InstructionMeasurer {
     }
 
     try {
+      final states = <dynamic>[];
+      if (setup != null) {
+        for (var i = 0; i < iterations; i++) {
+          final state = setup();
+          states.add(state is Future ? await state : state);
+        }
+      }
+
       // Reset and Enable the counter
       ioctlFn(fd, _perfEventIocReset, 0);
       ioctlFn(fd, _perfEventIocEnable, 0);
 
       // Run workload
       for (var i = 0; i < iterations; i++) {
-        fn();
+        if (setup != null) {
+          final r = fn(states[i]);
+          if (r is Future) {
+            await r;
+          }
+        } else {
+          final r = fn();
+          if (r is Future) {
+            await r;
+          }
+        }
       }
 
       // Disable

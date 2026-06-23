@@ -50,6 +50,8 @@ final class Sample {
 
   /// Calculates the [p]-th quantile (where 0.0 <= [p] <= 1.0)
   /// using linear interpolation (Type 7).
+  ///
+  /// It is an error if [p] is not between 0.0 and 1.0 (inclusive).
   double quantile(double p) {
     if (p < 0.0 || p > 1.0) {
       throw ArgumentError.value(p, 'p', 'Must be between 0.0 and 1.0');
@@ -74,11 +76,20 @@ final class Sample {
   /// Performs bootstrapping (Monte Carlo resampling with replacement)
   /// to estimate the 95% confidence intervals for the mean and median.
   ///
+  /// The [resamples] parameter controls the number of bootstrap iterations (default: 10000).
+  /// An optional [random] generator can be provided for reproducibility.
+  ///
   /// Returns a [BootstrapResult] containing the bootstrapped distributions
   /// and confidence intervals.
+  ///
+  /// It is an error if the sample is empty.
+  /// It is an error if [resamples] is less than 1.
   BootstrapResult bootstrap({int resamples = 10000, math.Random? random}) {
     if (values.isEmpty) {
       throw StateError('Cannot bootstrap an empty sample');
+    }
+    if (resamples < 1) {
+      throw ArgumentError.value(resamples, 'resamples', 'Must be at least 1');
     }
     final r = random ?? math.Random();
     final N = values.length;

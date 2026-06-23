@@ -17,8 +17,11 @@ import 'package:test/test.dart';
 
 void main() {
   group('Instruction Measurement', () {
-    test('measure works or returns null depending on support', () {
-      final result = InstructionMeasurer.measure(fn: () {}, iterations: 100);
+    test('measure works or returns null depending on support', () async {
+      final result = await InstructionMeasurer.measure(
+        fn: () {},
+        iterations: 100,
+      );
       if (InstructionMeasurer.isSupported) {
         expect(result, isNotNull);
         expect(result!.instructionsPerIteration, greaterThanOrEqualTo(0.0));

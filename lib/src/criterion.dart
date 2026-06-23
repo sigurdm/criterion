@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+import 'dart:async';
 import 'dart:convert';
 import 'dart_environment.dart' as env;
 import 'statistics.dart';
@@ -22,8 +23,15 @@ import 'kbssd_math.dart';
 import 'result.dart';
 import 'report_generator.dart';
 import 'blackhole.dart';
+import 'throughput.dart';
 
-/// Defines a benchmark suite. Runs all registered benchmarks immediately.
+/// Defines a benchmark suite and runs all registered benchmarks.
+///
+/// The [suiteName] is used as a header in the reports.
+/// The [body] callback is used to register benchmarks using [Criterion.bench].
+/// The [config] allows customizing the benchmark execution.
+///
+/// Returns a list of [BenchmarkResult]s.
 Future<List<BenchmarkResult>> criterion(
   String suiteName,
   void Function(Criterion c) body, {
@@ -37,7 +45,10 @@ Future<List<BenchmarkResult>> criterion(
   return await c.run();
 }
 
-/// A class used to register and run benchmarks.
+/// A runner and registry for benchmarks.
+///
+/// Use [Criterion] to register benchmarks with [bench], group them with [group],
+/// and compare variants with [variants].
 final class Criterion {
   final List<Benchmark> _benchmarks = [];
   final List<String> _groupPath = [];
@@ -52,42 +63,124 @@ final class Criterion {
   Criterion({this.config = const CriterionConfig()});
 
   /// Registers a benchmark.
-  void bench(
+  ///
+  /// The [name] uniquely identifies this benchmark within its group.
+  /// The [fn] is the benchmark function.
+  ///
+  /// If [setup] is provided, it is executed before each iteration to generate
+  /// a state of type [T], which is then passed to [fn]. In this case, [fn] must
+  /// be a function that accepts a single parameter of type [T] (e.g., `void Function(T)`).
+  ///
+  /// If [setup] is not provided, [fn] must be a function that accepts no parameters
+  /// (e.g., `void Function()`).
+  ///
+  /// The [samples] configures how many measurement samples to collect.
+  /// The [warmupDuration] is the minimum time spent warming up the JIT compiler.
+  /// The [noOp] is an optional function with the same signature as [fn] that can
+  /// be used to measure and subtract harness or bridge overhead.
+  /// The [throughput] is an optional metric to track throughput (bytes or elements).
+  ///
+  /// Throws [ArgumentError] if the signature of [fn] or [noOp] does not match
+  /// the requirements based on [setup] presence.
+  void bench<T>(
     String name,
-    void Function() fn, {
+    Function fn, {
     int samples = 100,
     Duration warmupDuration = const Duration(seconds: 1),
-    void Function()? noOp,
+    Function? noOp,
+    Throughput? throughput,
+    FutureOr<T> Function()? setup,
   }) {
+    if (setup != null) {
+      if (fn is Function()) {
+        throw ArgumentError(
+          'fn must accept a parameter of type $T when setup is provided',
+        );
+      }
+      if (noOp != null && noOp is Function()) {
+        throw ArgumentError(
+          'noOp must accept a parameter of type $T when setup is provided',
+        );
+      }
+    } else {
+      if (fn is! Function()) {
+        throw ArgumentError(
+          'fn must not accept any parameters when setup is not provided',
+        );
+      }
+      if (noOp != null && noOp is! Function()) {
+        throw ArgumentError(
+          'noOp must not accept any parameters when setup is not provided',
+        );
+      }
+    }
+
     final fullName = _groupPath.isEmpty
         ? name
         : '${_groupPath.join(" / ")} / $name';
     _benchmarks.add(
-      Benchmark(
+      Benchmark<T>(
         fullName,
         fn,
         config: config,
         samples: samples,
         warmupDuration: warmupDuration,
         noOp: noOp,
+        throughput: throughput,
+        setup: setup,
       ),
     );
   }
 
-  /// Groups benchmarks together.
+  /// Groups related benchmarks together to organize reports.
+  ///
+  /// Groups can be nested. The [name] is appended to the parent group path.
+  /// The [body] callback is executed immediately to register benchmarks within the group.
   void group(String name, void Function() body) {
     _groupPath.add(name);
     body();
     _groupPath.removeLast();
   }
 
-  /// Registers a group of benchmark variants.
-  void variants(
+  /// Registers a group of benchmark variants to compare their performance.
+  ///
+  /// The [groupName] identifies the group of variants.
+  /// The [variants] map contains variant names and their corresponding functions.
+  ///
+  /// If [setup] is provided, it is executed before each iteration to generate
+  /// a state of type [T] for each variant. In this case, all variant functions
+  /// must accept a single parameter of type [T].
+  ///
+  /// If [setup] is not provided, all variant functions must accept no parameters.
+  ///
+  /// The [samples], [warmupDuration], and [throughput] apply to all variants in the group.
+  ///
+  /// Throws [ArgumentError] if the signature of any variant function does not match
+  /// the requirements based on [setup] presence.
+  void variants<T>(
     String groupName,
-    Map<String, void Function()> variants, {
+    Map<String, Function> variants, {
     int samples = 100,
     Duration warmupDuration = const Duration(seconds: 1),
+    Throughput? throughput,
+    FutureOr<T> Function()? setup,
   }) {
+    variants.forEach((variantName, fn) {
+      if (setup != null) {
+        if (fn is Function()) {
+          throw ArgumentError(
+            'Variant "$variantName" must accept a parameter of type $T when setup is provided',
+          );
+        }
+      } else {
+        if (fn is! Function()) {
+          throw ArgumentError(
+            'Variant "$variantName" must not accept any parameters when setup is not provided',
+          );
+        }
+      }
+    });
+
     final baseName = _groupPath.isEmpty
         ? groupName
         : '${_groupPath.join(" / ")} / $groupName';
@@ -95,7 +188,7 @@ final class Criterion {
     variants.forEach((variantName, fn) {
       final fullName = '$baseName / $variantName';
       _benchmarks.add(
-        Benchmark(
+        Benchmark<T>(
           fullName,
           fn,
           config: config,
@@ -103,6 +196,8 @@ final class Criterion {
           warmupDuration: warmupDuration,
           variantGroup: groupName,
           variantName: variantName,
+          throughput: throughput,
+          setup: setup,
         ),
       );
     });
@@ -201,15 +296,21 @@ final class Criterion {
 }
 
 /// Represents a single benchmark definition.
-final class Benchmark {
+final class Benchmark<T> {
   /// The full hierarchical name of the benchmark.
   final String name;
 
   /// The function to benchmark.
-  final void Function() fn;
+  final Function fn;
 
   /// The no-op function to measure overhead, if any.
-  final void Function()? noOp;
+  final Function? noOp;
+
+  /// The throughput configuration, if any.
+  final Throughput? throughput;
+
+  /// The setup function, if any.
+  final FutureOr<T> Function()? setup;
 
   /// The number of samples to collect.
   final int samples;
@@ -236,6 +337,8 @@ final class Benchmark {
     this.warmupDuration = const Duration(seconds: 1),
     this.variantGroup,
     this.variantName,
+    this.throughput,
+    this.setup,
   });
 
   /// Executes the warm-up, calibration, sampling, statistical analysis,
@@ -249,17 +352,17 @@ final class Benchmark {
 
     // 1. Warm-up
     if (!config.useKbssd) {
-      _warmup(fn);
+      await _warmup(fn);
       if (hasNoOp) {
-        _warmup(noOp!);
+        await _warmup(noOp!);
       }
     }
 
     // 2. Calibration
-    final iterations = _calibrate(fn);
+    final iterations = await _calibrate(fn);
     int? noOpIterations;
     if (hasNoOp) {
-      noOpIterations = _calibrate(noOp!);
+      noOpIterations = await _calibrate(noOp!);
       if (!env.isJson) {
         print(
           '  Calibrated to $iterations iterations per sample (no-op: $noOpIterations).',
@@ -375,19 +478,20 @@ final class Benchmark {
       net: netResult,
       variantGroup: variantGroup,
       variantName: variantName,
+      throughput: throughput,
     );
   }
 
   Future<_MeasurementRun> _measureFunction(
-    void Function() targetFn,
+    Function targetFn,
     int iterations,
   ) async {
     // Sampling
     final List<double> sampleTimes;
     if (config.useKbssd) {
-      sampleTimes = _collectSamplesKbssd(targetFn, iterations);
+      sampleTimes = await _collectSamplesKbssd(targetFn, iterations);
     } else {
-      sampleTimes = _collectSamples(targetFn, iterations);
+      sampleTimes = await _collectSamples(targetFn, iterations);
     }
 
     // Statistical Analysis
@@ -396,16 +500,18 @@ final class Benchmark {
     final outlierAnalysis = sample.analyzeOutliers();
 
     // Memory Measurement
-    final memoryIterations = iterations > 10000 ? iterations : 10000;
+    final memoryIterations = iterations > 100 ? iterations : 100;
     final memoryResult = await MemoryMeasurer.measure(
       fn: targetFn,
       iterations: memoryIterations,
+      setup: setup,
     );
 
     // Instruction Measurement
-    final instructionResult = InstructionMeasurer.measure(
+    final instructionResult = await InstructionMeasurer.measure(
       fn: targetFn,
       iterations: memoryIterations,
+      setup: setup,
     );
 
     return _MeasurementRun(
@@ -417,21 +523,33 @@ final class Benchmark {
     );
   }
 
-  void _warmup(void Function() targetFn) {
+  Future<void> _warmup(Function targetFn) async {
     final stopwatch = Stopwatch()..start();
     final frequency = stopwatch.frequency;
     final targetTicks = (frequency * warmupDuration.inMicroseconds) / 1000000;
     while (stopwatch.elapsedTicks < targetTicks) {
-      targetFn();
+      if (setup != null) {
+        final state = setup!();
+        final resolvedState = state is Future ? await state : state;
+        final r = targetFn(resolvedState);
+        if (r is Future) {
+          await r;
+        }
+      } else {
+        final r = targetFn();
+        if (r is Future) {
+          await r;
+        }
+      }
     }
     stopwatch.stop();
   }
 
-  int _calibrate(void Function() targetFn) {
+  Future<int> _calibrate(Function targetFn) async {
     var iterations = 1;
     const targetNs = 10 * 1000 * 1000; // 10ms
     while (true) {
-      final ns = _measureIterations(targetFn, iterations);
+      final ns = await _measureIterations(targetFn, iterations);
       if (ns >= targetNs) {
         break;
       }
@@ -443,27 +561,53 @@ final class Benchmark {
     return iterations;
   }
 
-  double _measureIterations(void Function() targetFn, int count) {
-    final stopwatch = Stopwatch()..start();
-    for (var i = 0; i < count; i++) {
-      targetFn();
+  Future<double> _measureIterations(Function targetFn, int count) async {
+    final stopwatch = Stopwatch();
+    if (setup != null) {
+      final states = <T>[];
+      for (var i = 0; i < count; i++) {
+        final state = setup!();
+        states.add(state is Future ? await state : state);
+      }
+      stopwatch.start();
+      for (var i = 0; i < count; i++) {
+        final r = targetFn(states[i]);
+        if (r is Future) {
+          await r;
+        }
+      }
+      stopwatch.stop();
+    } else {
+      stopwatch.start();
+      for (var i = 0; i < count; i++) {
+        final r = targetFn();
+        if (r is Future) {
+          await r;
+        }
+      }
+      stopwatch.stop();
     }
-    stopwatch.stop();
     final ticks = stopwatch.elapsedTicks;
     final frequency = stopwatch.frequency;
     return (ticks * 1000000000.0) / frequency; // Returns nanoseconds
   }
 
-  List<double> _collectSamples(void Function() targetFn, int iterations) {
+  Future<List<double>> _collectSamples(
+    Function targetFn,
+    int iterations,
+  ) async {
     final times = <double>[];
     for (var s = 0; s < samples; s++) {
-      final totalNs = _measureIterations(targetFn, iterations);
+      final totalNs = await _measureIterations(targetFn, iterations);
       times.add(totalNs / iterations);
     }
     return times;
   }
 
-  List<double> _collectSamplesKbssd(void Function() targetFn, int iterations) {
+  Future<List<double>> _collectSamplesKbssd(
+    Function targetFn,
+    int iterations,
+  ) async {
     final w = config.kbssdWindowSize;
     final maxSamples = config.kbssdMaxSamples;
     final stabilityRequired = config.kbssdStabilityRequired;
@@ -473,7 +617,7 @@ final class Benchmark {
     // 1. Fill cold buffer of size w * 2
     final coldBuffer = <double>[];
     for (var i = 0; i < w * 2; i++) {
-      final totalNs = _measureIterations(targetFn, iterations);
+      final totalNs = await _measureIterations(targetFn, iterations);
       coldBuffer.add(totalNs / iterations);
     }
 
@@ -495,7 +639,7 @@ final class Benchmark {
     double minMmd = double.infinity;
 
     for (var s = w * 2; s < maxSamples; s++) {
-      final totalNs = _measureIterations(targetFn, iterations);
+      final totalNs = await _measureIterations(targetFn, iterations);
       final newSample = totalNs / iterations;
 
       slidingBuffer.add(newSample);
@@ -663,6 +807,64 @@ final class Benchmark {
         );
       }
     }
+    final meanTimeNs = noOpRun != null
+        ? (mainRun.sample.mean - noOpRun.sample.mean).clamp(
+            0.0,
+            double.infinity,
+          )
+        : mainRun.sample.mean;
+    final throughputStr = _formatThroughput(meanTimeNs);
+    if (throughputStr != null) {
+      print('  throughput: $throughputStr');
+    }
+  }
+
+  String? _formatThroughput(double timeNs) {
+    if (throughput == null) return null;
+    if (timeNs == 0) return 'Infinity/s';
+
+    final seconds = timeNs / 1e9;
+    final rate = throughput!.count / seconds;
+
+    if (throughput!.unit == ThroughputUnit.bytes) {
+      return '${_formatBytesRate(rate)}/s';
+    } else {
+      return '${_formatCountRate(rate)} elements/s';
+    }
+  }
+
+  String _formatBytesRate(double bytesPerSecond) {
+    if (bytesPerSecond < 1024) {
+      return '${bytesPerSecond.toStringAsFixed(1)} B';
+    }
+    final kb = bytesPerSecond / 1024;
+    if (kb < 1024) {
+      return '${kb.toStringAsFixed(1)} KB';
+    }
+    final mb = kb / 1024;
+    if (mb < 1024) {
+      return '${mb.toStringAsFixed(1)} MB';
+    }
+    final gb = mb / 1024;
+    return '${gb.toStringAsFixed(1)} GB';
+  }
+
+  String _formatCountRate(double countPerSecond) {
+    final intCount = countPerSecond.round();
+    if (intCount < 1000) {
+      return intCount.toString();
+    }
+    final str = intCount.toString();
+    final sb = StringBuffer();
+    int count = 0;
+    for (int i = str.length - 1; i >= 0; i--) {
+      sb.write(str[i]);
+      count++;
+      if (count % 3 == 0 && i > 0) {
+        sb.write(',');
+      }
+    }
+    return sb.toString().split('').reversed.join();
   }
 
   /// Formats duration in nanoseconds to a human readable string.

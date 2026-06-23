@@ -42,6 +42,13 @@ final class CriterionConfig {
   final int kbssdMaxSamples;
 
   /// Creates a new [CriterionConfig] instance.
+  ///
+  /// It is an error if:
+  /// * [kbssdWindowSize] is less than 1.
+  /// * [kbssdStabilityRequired] is less than 1.
+  /// * [kbssdTrimPercentage] is not between 0.0 (inclusive) and 0.5 (exclusive).
+  /// * [kbssdScaleFactor] is less than or equal to 0.0.
+  /// * [kbssdMaxSamples] is less than double of [kbssdWindowSize].
   const CriterionConfig({
     this.generateHtmlReport = true,
     this.exportJson = true,
@@ -52,5 +59,18 @@ final class CriterionConfig {
     this.kbssdTrimPercentage = 0.10,
     this.kbssdScaleFactor = 2.0,
     this.kbssdMaxSamples = 200,
-  });
+  }) : assert(kbssdWindowSize >= 1, 'kbssdWindowSize must be >= 1'),
+       assert(
+         kbssdStabilityRequired >= 1,
+         'kbssdStabilityRequired must be >= 1',
+       ),
+       assert(
+         kbssdTrimPercentage >= 0.0 && kbssdTrimPercentage < 0.5,
+         'kbssdTrimPercentage must be in [0.0, 0.5)',
+       ),
+       assert(kbssdScaleFactor > 0.0, 'kbssdScaleFactor must be > 0.0'),
+       assert(
+         kbssdMaxSamples >= kbssdWindowSize * 2,
+         'kbssdMaxSamples must be >= kbssdWindowSize * 2',
+       );
 }

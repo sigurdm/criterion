@@ -16,6 +16,7 @@ import 'dart:developer' as developer;
 import 'dart:io';
 import 'dart:isolate' as dart_isolate;
 import 'package:vm_service/vm_service.dart';
+import 'dart:async';
 import 'package:vm_service/vm_service_io.dart';
 import '../result.dart';
 
@@ -25,8 +26,9 @@ final class MemoryMeasurer {
   ///
   /// Returns `null` if measurement fails.
   static Future<MemoryResult?> measure({
-    required void Function() fn,
+    required Function fn,
     required int iterations,
+    Function? setup,
   }) async {
     VmService? service;
     try {
@@ -47,6 +49,14 @@ final class MemoryMeasurer {
         throw Exception('Isolate ID not found');
       }
 
+      final states = <dynamic>[];
+      if (setup != null) {
+        for (var i = 0; i < iterations; i++) {
+          final state = setup();
+          states.add(state is Future ? await state : state);
+        }
+      }
+
       // 3. Trigger GC and reset allocation accumulators for baseline
       final baseline = await service.getAllocationProfile(
         isolateId,
@@ -57,7 +67,17 @@ final class MemoryMeasurer {
 
       // 4. Run the benchmark function M times
       for (var i = 0; i < iterations; i++) {
-        fn();
+        if (setup != null) {
+          final r = fn(states[i]);
+          if (r is Future) {
+            await r;
+          }
+        } else {
+          final r = fn();
+          if (r is Future) {
+            await r;
+          }
+        }
       }
 
       // 5. Record end RSS and query end allocation profile
@@ -106,9 +126,26 @@ final class MemoryMeasurer {
     } catch (e) {
       // Fall back to measuring only RSS delta
       try {
+        final states = <dynamic>[];
+        if (setup != null) {
+          for (var i = 0; i < iterations; i++) {
+            final state = setup();
+            states.add(state is Future ? await state : state);
+          }
+        }
         final baselineRss = ProcessInfo.currentRss;
         for (var i = 0; i < iterations; i++) {
-          fn();
+          if (setup != null) {
+            final r = fn(states[i]);
+            if (r is Future) {
+              await r;
+            }
+          } else {
+            final r = fn();
+            if (r is Future) {
+              await r;
+            }
+          }
         }
         final endRss = ProcessInfo.currentRss;
         return MemoryResult(

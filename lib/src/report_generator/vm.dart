@@ -590,6 +590,13 @@ final class ReportGenerator {
                     <tr><td>Instructions</td><td class="metric-value">\${formatCount(primary.instructions.instructionsPerIteration)}</td><td>-</td></tr>
                 `;
             }
+            if (activeBenchmark.throughput) {
+                const tp = activeBenchmark.throughput;
+                const meanSec = primary.mean / 1e9;
+                const rate = tp.count / meanSec;
+                const rateStr = tp.unit === 'bytes' ? formatBytes(rate) + '/s' : formatCount(rate) + ' elements/s';
+                html += `<tr><td>Throughput</td><td class="metric-value">\${rateStr}</td><td>-</td></tr>`;
+            }
             document.getElementById('summary-table').innerHTML = html;
 
             // KDE Chart

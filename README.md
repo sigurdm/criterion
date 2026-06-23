@@ -212,6 +212,34 @@ Benchmarking strlen (1000 chars)...
   instructions: [Total: 412] [Overhead: 7] [Net: 405]
 ```
 
+### Preventing Dead-Code Elimination (DCE)
+
+When benchmarking pure functions (functions that have no side effects and always return the same value for the same input), compilers (like the Dart AOT compiler or JS compilers) might optimize away the function call if the result is not used. This is called Dead-Code Elimination (DCE).
+
+To prevent this, you can pass the result of your function to the global `blackhole` function. This forces the compiler to treat the computation as live, preventing it from being optimized away, while introducing virtually zero runtime overhead.
+
+```dart
+import 'package:criterion/criterion.dart';
+
+int pureFunction(int x) {
+  return x * 2;
+}
+
+void main() async {
+  await criterion('DCE Prevention', (c) {
+    // Bad: The compiler might optimize away pureFunction(10) completely
+    c.bench('without blackhole', () {
+      pureFunction(10);
+    });
+
+    // Good: The compiler is forced to execute pureFunction(10)
+    c.bench('with blackhole', () {
+      blackhole(pureFunction(10));
+    });
+  });
+}
+```
+
 ## Configuration
 
 Configure the runner by passing a `CriterionConfig` instance:
