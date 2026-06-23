@@ -211,7 +211,7 @@ final class ReportGenerator {
                     </div>
 
                     <div class="card">
-                        <h3>Time Distribution (KDE)</h3>
+                        <h3>Time Distribution (Kernel Density Estimation)</h3>
                         <div class="chart-container">
                             <canvas id="kdeChart"></canvas>
                         </div>
@@ -242,7 +242,7 @@ final class ReportGenerator {
                 <div id="comparison-view" style="display:none;">
                     <h2>Benchmark Comparison</h2>
                     <div class="card">
-                        <h3>Overlapping KDE (Time Distribution)</h3>
+                        <h3>Overlapping Kernel Density Estimation (Time Distribution)</h3>
                         <div class="chart-container">
                             <canvas id="compareKdeChart"></canvas>
                         </div>

@@ -21,6 +21,7 @@ import 'config.dart';
 import 'kbssd_math.dart';
 import 'result.dart';
 import 'report_generator.dart';
+import 'blackhole.dart';
 
 /// Defines a benchmark suite. Runs all registered benchmarks immediately.
 Future<List<BenchmarkResult>> criterion(
@@ -114,6 +115,7 @@ final class Criterion {
       final result = await benchmark.run();
       results.add(result);
     }
+    Blackhole.preventDCE();
     if (env.isJson) {
       print(jsonEncode(results.map((r) => r.toJson()).toList()));
     } else {
