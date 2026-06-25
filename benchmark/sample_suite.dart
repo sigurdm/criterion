@@ -27,21 +27,31 @@ external int labsLeaf(int j);
 @Native<UintPtr Function(Pointer<Char>)>(symbol: 'strlen', isLeaf: true)
 external int strlenLeaf(Pointer<Char> s);
 
-int fib(int n) {
-  if (n <= 1) return n;
-  return fib(n - 1) + fib(n - 2);
+final List<List<String>> _parsingInputs = List.generate(100, (i) {
+  final list = List.generate(50, (j) => j.toString());
+  if (i % 50 == 0) {
+    list[25] = 'abc'; // Invalid integer
+  }
+  return list;
+});
+int _parsingIndex = 0;
+
+List<String> _getNextInput() {
+  final input = _parsingInputs[_parsingIndex];
+  _parsingIndex = (_parsingIndex + 1) % 100;
+  return input;
 }
 
-int fibIterative(int n) {
-  if (n <= 1) return n;
-  var a = 0;
-  var b = 1;
-  for (var i = 2; i <= n; i++) {
-    final temp = a + b;
-    a = b;
-    b = temp;
+List<int> parseSafe(List<String> inputs) {
+  return inputs.map((s) => int.tryParse(s) ?? 0).toList();
+}
+
+List<int> parseException(List<String> inputs) {
+  try {
+    return inputs.map((s) => int.parse(s)).toList();
+  } on FormatException {
+    return inputs.map((s) => int.tryParse(s) ?? 0).toList();
   }
-  return b;
 }
 
 void main() async {
@@ -50,9 +60,12 @@ void main() async {
 
   try {
     await criterion('Sample Suite', (c) {
-      c.group('Fibonacci', () {
-        c.bench('Recursive', () => fib(20));
-        c.bench('Iterative', () => fibIterative(20));
+      c.group('Integer Parsing', () {
+        c.bench('Safe (tryParse)', () => parseSafe(_getNextInput()));
+        c.bench(
+          'Exception-based (try/catch)',
+          () => parseException(_getNextInput()),
+        );
       });
 
       c.group('String Concatenation', () {
