@@ -14,6 +14,7 @@
 
 import 'dart:io';
 import 'package:path/path.dart' as p;
+import 'package:puppeteer/puppeteer.dart';
 
 void main(List<String> args) async {
   final skipRun = args.contains('--skip-run');
@@ -47,38 +48,52 @@ void main(List<String> args) async {
     docImagesDir.createSync(recursive: true);
   }
 
-  final chromePath = '/usr/bin/google-chrome'; // Found in previous step
   final htmlUrl = 'file://${reportHtml.absolute.path}';
 
-  print('Generating single report screenshot...');
-  final singleResult = await Process.run(chromePath, [
-    '--headless',
-    '--disable-gpu',
-    '--screenshot=${p.join(docImagesDir.path, 'single_report.png')}',
-    '--window-size=1280,1080',
-    '$htmlUrl?animate=false&bench=0',
-  ]);
-  if (singleResult.exitCode != 0) {
-    stderr.writeln(
-      'Failed to generate single report screenshot: ${singleResult.stderr}',
-    );
-  } else {
-    print('Saved to doc/images/single_report.png');
-  }
+  print('Launching Puppeteer browser...');
+  // This will download Chromium if it's not already downloaded.
+  final browser = await puppeteer.launch();
+  print('Browser launched.');
 
-  print('Generating comparison report screenshot...');
-  final compareResult = await Process.run(chromePath, [
-    '--headless',
-    '--disable-gpu',
-    '--screenshot=${p.join(docImagesDir.path, 'comparison_report.png')}',
-    '--window-size=1280,1080',
-    '$htmlUrl?animate=false&compare=true&select=0,1',
-  ]);
-  if (compareResult.exitCode != 0) {
-    stderr.writeln(
-      'Failed to generate comparison report screenshot: ${compareResult.stderr}',
+  try {
+    print('Generating single report screenshot...');
+    final page1 = await browser.newPage();
+    await page1.setViewport(DeviceViewport(width: 1280, height: 1080));
+    await page1.goto(
+      '$htmlUrl?animate=false&bench=0',
+      wait: Until.networkAlmostIdle,
     );
-  } else {
-    print('Saved to doc/images/comparison_report.png');
+    // Wait a small bit for JS to render charts just in case
+    await Future.delayed(const Duration(milliseconds: 500));
+    final singleFile = File(p.join(docImagesDir.path, 'single_report.jpg'));
+    final singleBytes = await page1.screenshot(
+      fullPage: false,
+      format: ScreenshotFormat.jpeg,
+    );
+    await singleFile.writeAsBytes(singleBytes);
+    print('Saved to ${singleFile.path}');
+
+    print('Generating comparison report screenshot...');
+    final page2 = await browser.newPage();
+    await page2.setViewport(DeviceViewport(width: 1280, height: 1080));
+    await page2.goto(
+      '$htmlUrl?animate=false&compare=true&select=0,1',
+      wait: Until.networkAlmostIdle,
+    );
+    await Future.delayed(const Duration(milliseconds: 500));
+    final compareFile = File(
+      p.join(docImagesDir.path, 'comparison_report.jpg'),
+    );
+    final compareBytes = await page2.screenshot(
+      fullPage: false,
+      format: ScreenshotFormat.jpeg,
+    );
+    await compareFile.writeAsBytes(compareBytes);
+    print('Saved to ${compareFile.path}');
+  } catch (e, stack) {
+    stderr.writeln('Error generating screenshots: $e');
+    stderr.writeln(stack);
+  } finally {
+    await browser.close();
   }
 }
