@@ -1,4 +1,4 @@
-// Copyright 2026 Sigurd Meldgaard
+// Copyright 2026 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+import "dart:convert";
 import "result.dart";
 import "statistics.dart";
 
@@ -38,6 +39,12 @@ final class BenchmarkComparison {
   /// The name of the benchmark.
   final String name;
 
+  /// The platform flavor.
+  final String platform;
+
+  /// The parameter value, if any.
+  final dynamic parameterValue;
+
   /// The time comparison.
   final MetricComparison time;
 
@@ -53,14 +60,20 @@ final class BenchmarkComparison {
   /// The instructions comparison, if available.
   final MetricComparison? instructions;
 
+  /// The CPU cycles comparison, if available.
+  final MetricComparison? cycles;
+
   /// Creates a [BenchmarkComparison].
   BenchmarkComparison({
     required this.name,
+    required this.platform,
+    required this.parameterValue,
     required this.time,
     required this.timeSignificant,
     this.allocatedBytes,
     this.allocatedObjects,
     this.instructions,
+    this.cycles,
   });
 }
 
@@ -82,19 +95,28 @@ final class SuiteComparison {
     required this.added,
   });
 
+  /// Returns the list of benchmarks that showed a statistically significant regression.
+  List<BenchmarkComparison> get regressions =>
+      compared.where((c) => c.timeSignificant && c.time.diff > 0).toList();
+
   /// Formats the comparison as a Markdown table.
   String toMarkdownTable() {
     if (compared.isEmpty && added.isEmpty && removed.isEmpty) {
       return "No results to compare.";
     }
 
+    final hasPlatform = compared.any((c) => c.platform.isNotEmpty);
+    final hasParameter = compared.any((c) => c.parameterValue != null);
     final hasMemory = compared.any(
       (c) => c.allocatedBytes != null || c.allocatedObjects != null,
     );
     final hasInstructions = compared.any((c) => c.instructions != null);
+    final hasCycles = compared.any((c) => c.cycles != null);
 
     final headers = [
       "Benchmark",
+      if (hasPlatform) "Platform",
+      if (hasParameter) "Parameter",
       "Time (before)",
       "Time (after)",
       "Delta (%)",
@@ -112,6 +134,7 @@ final class SuiteComparison {
         "Instructions (after)",
         "Delta (%)",
       ],
+      if (hasCycles) ...["Cycles (before)", "Cycles (after)", "Delta (%)"],
     ];
 
     final sb = StringBuffer();
@@ -124,6 +147,8 @@ final class SuiteComparison {
 
       final row = [
         c.name,
+        if (hasPlatform) c.platform,
+        if (hasParameter) c.parameterValue?.toString() ?? "N/A",
         _formatDuration(c.time.before),
         _formatDuration(c.time.after),
         "${_formatDiff(c.time.diff, _formatDuration)} ($timeDelta)",
@@ -155,21 +180,28 @@ final class SuiteComparison {
               ? "${_formatDiff(c.instructions!.diff, _formatCount)} (${_formatPercent(c.instructions!.percentDiff)})"
               : "N/A",
         ],
+        if (hasCycles) ...[
+          c.cycles != null ? _formatCount(c.cycles!.before) : "N/A",
+          c.cycles != null ? _formatCount(c.cycles!.after) : "N/A",
+          c.cycles != null
+              ? "${_formatDiff(c.cycles!.diff, _formatCount)} (${_formatPercent(c.cycles!.percentDiff)})"
+              : "N/A",
+        ],
       ];
       sb.writeln("| ${row.join(" | ")} |");
     }
 
     if (removed.isNotEmpty) {
       sb.writeln("\n### Removed Benchmarks");
-      for (final name in removed) {
-        sb.writeln("- $name");
+      for (final key in removed) {
+        sb.writeln("- $key");
       }
     }
 
     if (added.isNotEmpty) {
       sb.writeln("\n### Added Benchmarks");
-      for (final name in added) {
-        sb.writeln("- $name");
+      for (final key in added) {
+        sb.writeln("- $key");
       }
     }
 
@@ -177,40 +209,46 @@ final class SuiteComparison {
   }
 }
 
+String _comparisonKey(BenchmarkResult r) {
+  final parts = [r.name];
+  if (r.platform.isNotEmpty) parts.add(r.platform);
+  if (r.parameterValue != null) parts.add(r.parameterValue.toString());
+  return parts.join('::');
+}
+
 /// Compares two lists of benchmark results.
 SuiteComparison compareResults(
   List<BenchmarkResult> before,
   List<BenchmarkResult> after,
 ) {
-  final beforeMap = {for (var r in before) r.name: r};
-  final afterMap = {for (var r in after) r.name: r};
+  final beforeMap = {for (var r in before) _comparisonKey(r): r};
+  final afterMap = {for (var r in after) _comparisonKey(r): r};
 
   final compared = <BenchmarkComparison>[];
   final removed = <String>[];
   final added = <String>[];
 
-  for (final name in beforeMap.keys) {
-    if (!afterMap.containsKey(name)) {
-      removed.add(name);
+  for (final key in beforeMap.keys) {
+    if (!afterMap.containsKey(key)) {
+      removed.add(key);
     }
   }
 
-  for (final name in afterMap.keys) {
-    if (!beforeMap.containsKey(name)) {
-      added.add(name);
+  for (final key in afterMap.keys) {
+    if (!beforeMap.containsKey(key)) {
+      added.add(key);
     }
   }
 
-  // Sort names for deterministic output
-  final matchedNames =
-      beforeMap.keys.where((name) => afterMap.containsKey(name)).toList()
-        ..sort();
+  // Sort keys for deterministic output
+  final matchedKeys =
+      beforeMap.keys.where((key) => afterMap.containsKey(key)).toList()..sort();
   removed.sort();
   added.sort();
 
-  for (final name in matchedNames) {
-    final b = beforeMap[name]!;
-    final a = afterMap[name]!;
+  for (final key in matchedKeys) {
+    final b = beforeMap[key]!;
+    final a = afterMap[key]!;
     final timeSignificant = _isSignificant(b.primary.meanCI, a.primary.meanCI);
 
     MetricComparison? bytes;
@@ -240,14 +278,26 @@ SuiteComparison compareResults(
       );
     }
 
+    MetricComparison? cycles;
+    if (b.primary.cyclesPerIteration != null &&
+        a.primary.cyclesPerIteration != null) {
+      cycles = MetricComparison(
+        b.primary.cyclesPerIteration!,
+        a.primary.cyclesPerIteration!,
+      );
+    }
+
     compared.add(
       BenchmarkComparison(
-        name: name,
+        name: a.name,
+        platform: a.platform,
+        parameterValue: a.parameterValue,
         time: MetricComparison(b.primary.mean, a.primary.mean),
         timeSignificant: timeSignificant,
         allocatedBytes: bytes,
         allocatedObjects: objects,
         instructions: inst,
+        cycles: cycles,
       ),
     );
   }
@@ -323,4 +373,25 @@ String _formatPercent(double pct) {
 String _formatDiff(double diff, String Function(double) formatter) {
   final sign = diff > 0 ? "+" : "";
   return "$sign${formatter(diff)}";
+}
+
+/// Parses a list of [BenchmarkResult]s from a JSON string.
+List<BenchmarkResult> loadResults(String jsonString) {
+  final decoded = jsonDecode(jsonString);
+  if (decoded is! List) {
+    throw FormatException("Expected a list of benchmark results");
+  }
+  return decoded.map((e) {
+    if (e is! Map<String, dynamic>) {
+      throw FormatException("Expected a map for benchmark result");
+    }
+    return BenchmarkResult.fromJson(e);
+  }).toList();
+}
+
+/// Formats a list of [BenchmarkResult]s as a pretty JSON string.
+String formatResults(List<BenchmarkResult> results) {
+  return const JsonEncoder.withIndent(
+    '  ',
+  ).convert(results.map((r) => r.toJson()).toList());
 }

@@ -1,4 +1,4 @@
-// Copyright 2026 Sigurd Meldgaard
+// Copyright 2026 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -70,6 +70,12 @@ final class MeasurementResult {
   /// Instruction measurement results, if available.
   final InstructionResult? instructions;
 
+  /// CPU profile results, if available.
+  final CpuProfileResult? cpuProfile;
+
+  /// The average number of CPU cycles executed per iteration, if available.
+  final double? cyclesPerIteration;
+
   /// Creates a new [MeasurementResult].
   MeasurementResult({
     required this.sampleTimes,
@@ -81,6 +87,8 @@ final class MeasurementResult {
     required this.outliers,
     this.memory,
     this.instructions,
+    this.cpuProfile,
+    this.cyclesPerIteration,
   });
 
   /// Converts this result to a JSON-encodable map.
@@ -110,11 +118,17 @@ final class MeasurementResult {
           "allocatedBytesPerIteration": memory!.allocatedBytesPerIteration,
           "allocatedObjectsPerIteration": memory!.allocatedObjectsPerIteration,
           "rssDeltaBytes": memory!.rssDeltaBytes,
+          if (memory!.classAllocations != null)
+            "classAllocations": memory!.classAllocations!
+                .map((c) => c.toJson())
+                .toList(),
         },
       if (instructions != null)
         "instructions": {
           "instructionsPerIteration": instructions!.instructionsPerIteration,
         },
+      if (cpuProfile != null) "cpuProfile": cpuProfile!.toJson(),
+      if (cyclesPerIteration != null) "cyclesPerIteration": cyclesPerIteration,
     };
   }
 
@@ -125,6 +139,7 @@ final class MeasurementResult {
     final outliers = json["outliers"] as Map<String, dynamic>;
     final memoryJson = json["memory"] as Map<String, dynamic>?;
     final instructionsJson = json["instructions"] as Map<String, dynamic>?;
+    final cpuProfileJson = json["cpuProfile"] as Map<String, dynamic>?;
 
     return MeasurementResult(
       sampleTimes: (json["sampleTimes"] as List).cast<double>(),
@@ -157,6 +172,11 @@ final class MeasurementResult {
                   (memoryJson["allocatedObjectsPerIteration"] as num?)
                       ?.toDouble(),
               rssDeltaBytes: memoryJson["rssDeltaBytes"] as int,
+              classAllocations: (memoryJson["classAllocations"] as List?)
+                  ?.map(
+                    (c) => ClassAllocation.fromJson(c as Map<String, dynamic>),
+                  )
+                  .toList(),
             ),
       instructions: instructionsJson == null
           ? null
@@ -165,6 +185,10 @@ final class MeasurementResult {
                   (instructionsJson["instructionsPerIteration"] as num)
                       .toDouble(),
             ),
+      cpuProfile: cpuProfileJson == null
+          ? null
+          : CpuProfileResult.fromJson(cpuProfileJson),
+      cyclesPerIteration: (json["cyclesPerIteration"] as num?)?.toDouble(),
     );
   }
 }
@@ -183,12 +207,16 @@ final class NetResult {
   /// Net instructions.
   final double? instructions;
 
+  /// Net CPU cycles.
+  final double? cycles;
+
   /// Creates a new [NetResult].
   NetResult({
     required this.timeNs,
     this.allocatedBytes,
     this.allocatedObjects,
     this.instructions,
+    this.cycles,
   });
 
   /// Converts this result to a JSON-encodable map.
@@ -198,6 +226,7 @@ final class NetResult {
       if (allocatedBytes != null) "allocatedBytes": allocatedBytes,
       if (allocatedObjects != null) "allocatedObjects": allocatedObjects,
       if (instructions != null) "instructions": instructions,
+      if (cycles != null) "cycles": cycles,
     };
   }
 
@@ -208,6 +237,7 @@ final class NetResult {
       allocatedBytes: (json["allocatedBytes"] as num?)?.toDouble(),
       allocatedObjects: (json["allocatedObjects"] as num?)?.toDouble(),
       instructions: (json["instructions"] as num?)?.toDouble(),
+      cycles: (json["cycles"] as num?)?.toDouble(),
     );
   }
 }
@@ -244,6 +274,12 @@ final class BenchmarkResult {
   /// The variant name, if this benchmark is part of a variant group.
   final String? variantName;
 
+  /// The parameter group name, if this benchmark is part of a parameterized group.
+  final String? parameterGroup;
+
+  /// The parameter value, if this benchmark is part of a parameterized group.
+  final dynamic parameterValue;
+
   /// The throughput configuration, if any.
   final Throughput? throughput;
 
@@ -259,6 +295,8 @@ final class BenchmarkResult {
     DateTime? timestamp,
     this.variantGroup,
     this.variantName,
+    this.parameterGroup,
+    this.parameterValue,
     this.throughput,
   }) : hostEnvironment = hostEnvironment ?? _defaultHostEnvironment(),
        platform =
@@ -299,8 +337,18 @@ final class BenchmarkResult {
       "timestamp": timestamp.toIso8601String(),
       if (variantGroup != null) "variantGroup": variantGroup,
       if (variantName != null) "variantName": variantName,
+      if (parameterGroup != null) "parameterGroup": parameterGroup,
+      if (parameterValue != null)
+        "parameterValue": _serializeParameterValue(parameterValue),
       if (throughput != null) "throughput": throughput!.toJson(),
     };
+  }
+
+  static dynamic _serializeParameterValue(dynamic val) {
+    if (val is num || val is bool || val is String || val == null) {
+      return val;
+    }
+    return val.toString();
   }
 
   /// Creates a [BenchmarkResult] from a JSON map.
@@ -328,8 +376,50 @@ final class BenchmarkResult {
       timestamp: DateTime.parse(json["timestamp"] as String),
       variantGroup: json["variantGroup"] as String?,
       variantName: json["variantName"] as String?,
+      parameterGroup: json["parameterGroup"] as String?,
+      parameterValue: json["parameterValue"],
     );
   }
+}
+
+/// Represents memory allocations for a specific class during a benchmark.
+final class ClassAllocation {
+  /// The name of the class.
+  final String className;
+
+  /// The URI of the library containing the class.
+  final String libraryUri;
+
+  /// The number of bytes allocated.
+  final int bytes;
+
+  /// The number of instances allocated.
+  final int instances;
+
+  /// Creates a [ClassAllocation].
+  ClassAllocation({
+    required this.className,
+    required this.libraryUri,
+    required this.bytes,
+    required this.instances,
+  });
+
+  /// Converts this to a JSON-encodable map.
+  Map<String, dynamic> toJson() => {
+    'className': className,
+    'libraryUri': libraryUri,
+    'bytes': bytes,
+    'instances': instances,
+  };
+
+  /// Creates a [ClassAllocation] from a JSON map.
+  factory ClassAllocation.fromJson(Map<String, dynamic> json) =>
+      ClassAllocation(
+        className: json['className'] as String,
+        libraryUri: json['libraryUri'] as String,
+        bytes: json['bytes'] as int,
+        instances: json['instances'] as int,
+      );
 }
 
 /// Represents the result of a memory measurement phase.
@@ -343,11 +433,15 @@ final class MemoryResult {
   /// The total RSS delta during the measurement phase.
   final int rssDeltaBytes;
 
+  /// Detailed allocations per class.
+  final List<ClassAllocation>? classAllocations;
+
   /// Creates a new [MemoryResult].
   MemoryResult({
     required this.allocatedBytesPerIteration,
     required this.allocatedObjectsPerIteration,
     required this.rssDeltaBytes,
+    this.classAllocations,
   });
 }
 
@@ -358,4 +452,80 @@ final class InstructionResult {
 
   /// Creates an [InstructionResult].
   InstructionResult({required this.instructionsPerIteration});
+}
+
+/// Represents a function in a CPU profile.
+final class CpuProfileFunction {
+  /// The name of the function.
+  final String name;
+
+  /// The resolved URL of the script containing the function.
+  final String resolvedUrl;
+
+  /// The number of times the function appeared on the stack.
+  final int inclusiveTicks;
+
+  /// The number of times the function appeared on the top of the stack.
+  final int exclusiveTicks;
+
+  /// Creates a [CpuProfileFunction].
+  CpuProfileFunction({
+    required this.name,
+    required this.resolvedUrl,
+    required this.inclusiveTicks,
+    required this.exclusiveTicks,
+  });
+
+  /// Converts this to a JSON-encodable map.
+  Map<String, dynamic> toJson() => {
+    'name': name,
+    'resolvedUrl': resolvedUrl,
+    'inclusiveTicks': inclusiveTicks,
+    'exclusiveTicks': exclusiveTicks,
+  };
+
+  /// Creates a [CpuProfileFunction] from a JSON map.
+  factory CpuProfileFunction.fromJson(Map<String, dynamic> json) =>
+      CpuProfileFunction(
+        name: json['name'] as String,
+        resolvedUrl: json['resolvedUrl'] as String,
+        inclusiveTicks: json['inclusiveTicks'] as int,
+        exclusiveTicks: json['exclusiveTicks'] as int,
+      );
+}
+
+/// Represents the CPU profile results.
+final class CpuProfileResult {
+  /// The list of functions in the profile.
+  final List<CpuProfileFunction> functions;
+
+  /// The total number of samples collected.
+  final int sampleCount;
+
+  /// The sample period in microseconds.
+  final int samplePeriod;
+
+  /// Creates a [CpuProfileResult].
+  CpuProfileResult({
+    required this.functions,
+    required this.sampleCount,
+    required this.samplePeriod,
+  });
+
+  /// Converts this to a JSON-encodable map.
+  Map<String, dynamic> toJson() => {
+    'functions': functions.map((f) => f.toJson()).toList(),
+    'sampleCount': sampleCount,
+    'samplePeriod': samplePeriod,
+  };
+
+  /// Creates a [CpuProfileResult] from a JSON map.
+  factory CpuProfileResult.fromJson(Map<String, dynamic> json) =>
+      CpuProfileResult(
+        functions: (json['functions'] as List)
+            .map((f) => CpuProfileFunction.fromJson(f as Map<String, dynamic>))
+            .toList(),
+        sampleCount: json['sampleCount'] as int,
+        samplePeriod: json['samplePeriod'] as int,
+      );
 }

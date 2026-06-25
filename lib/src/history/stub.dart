@@ -12,14 +12,25 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-/// High-performance statistical benchmarking framework.
-library;
+import '../result.dart';
 
-export 'src/criterion.dart';
-export 'src/throughput.dart';
-export 'src/config.dart';
-export 'src/result.dart';
-export 'src/blackhole.dart';
-export 'src/statistics.dart'
-    show Sample, ConfidenceInterval, BootstrapResult, OutlierAnalysis;
-export "src/comparison.dart";
+/// Stub implementation of HistoryManager when VM/IO is not available.
+final class HistoryManager {
+  /// The path to the history file (ignored).
+  final String filePath;
+
+  /// Creates a [HistoryManager].
+  HistoryManager(this.filePath);
+
+  /// Always returns an empty list.
+  Future<List<BenchmarkResult>> load() async => [];
+
+  /// No-op.
+  Future<void> save(List<BenchmarkResult> history) async {}
+}
+
+/// No-op.
+void checkRegressions({
+  required List<BenchmarkResult> current,
+  required List<BenchmarkResult> history,
+}) {}

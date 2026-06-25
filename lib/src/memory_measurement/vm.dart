@@ -1,4 +1,4 @@
-// Copyright 2026 Sigurd Meldgaard
+// Copyright 2026 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -87,6 +87,7 @@ final class MemoryMeasurer {
       // 6. Calculate delta in accumulated bytes and instances
       int totalAllocatedBytes = 0;
       int totalAllocatedInstances = 0;
+      final classAllocations = <ClassAllocation>[];
 
       final baselineMembers = {
         for (var member in baseline.members ?? <ClassHeapStats>[])
@@ -106,11 +107,21 @@ final class MemoryMeasurer {
         final diffBytes = endBytes - baselineBytes;
         final diffInstances = endInstances - baselineInstances;
 
-        if (diffBytes > 0) {
-          totalAllocatedBytes += diffBytes;
-        }
-        if (diffInstances > 0) {
-          totalAllocatedInstances += diffInstances;
+        if (diffBytes > 0 || diffInstances > 0) {
+          if (diffBytes > 0) {
+            totalAllocatedBytes += diffBytes;
+          }
+          if (diffInstances > 0) {
+            totalAllocatedInstances += diffInstances;
+          }
+          classAllocations.add(
+            ClassAllocation(
+              className: endMember.classRef!.name ?? 'Unknown',
+              libraryUri: endMember.classRef!.library?.uri ?? 'Unknown',
+              bytes: diffBytes > 0 ? diffBytes : 0,
+              instances: diffInstances > 0 ? diffInstances : 0,
+            ),
+          );
         }
       }
 
@@ -122,6 +133,7 @@ final class MemoryMeasurer {
         allocatedBytesPerIteration: allocatedBytesPerIteration,
         allocatedObjectsPerIteration: allocatedObjectsPerIteration,
         rssDeltaBytes: rssDeltaBytes,
+        classAllocations: classAllocations,
       );
     } catch (e) {
       // Fall back to measuring only RSS delta

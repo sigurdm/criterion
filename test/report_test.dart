@@ -1,4 +1,4 @@
-// Copyright 2026 Sigurd Meldgaard
+// Copyright 2026 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -15,6 +15,7 @@
 import 'dart:convert';
 import 'dart:io';
 import 'package:criterion/criterion.dart';
+import 'package:criterion/src/cycle_counter.dart';
 import 'package:test/test.dart';
 
 void main() {
@@ -48,6 +49,9 @@ void main() {
               sum += i;
             }
             if (sum == 0) throw StateError('invalid sum');
+          },
+          noOp: () {
+            // no-op
           },
           samples: 5,
           warmupDuration: const Duration(milliseconds: 5),
@@ -93,6 +97,16 @@ void main() {
       expect(primary['meanCI'], isNotNull);
       expect(primary['medianCI'], isNotNull);
       expect(primary['outliers'], isNotNull);
+      if (CycleCounter.isSupported) {
+        expect(primary['cyclesPerIteration'], isNotNull);
+      }
+
+      final net = firstResult['net'] as Map<String, dynamic>?;
+      expect(net, isNotNull);
+      expect(net!['timeNs'], isNotNull);
+      if (CycleCounter.isSupported) {
+        expect(net['cycles'], isNotNull);
+      }
 
       // Verify HTML content contains the data
       final htmlContent = htmlFile.readAsStringSync();
@@ -100,6 +114,10 @@ void main() {
       expect(htmlContent, contains('"name":"bench1"'));
       expect(htmlContent, contains('"name":"bench2"'));
       expect(htmlContent, contains('https://cdn.jsdelivr.net/npm/chart.js'));
+      expect(htmlContent, contains('classAllocations'));
+      expect(htmlContent, contains('memory-allocations-table'));
+      expect(htmlContent, contains('cpuProfile'));
+      expect(htmlContent, contains('cpu-profile-table'));
     });
 
     test('respects config to disable reports', () async {
@@ -212,6 +230,35 @@ void main() {
       expect(original.net, isNotNull);
       expect(deserialized.net, isNotNull);
       _compareNetResults(deserialized.net, original.net);
+    });
+
+    test('generates HTML report with parameterized benchmarks', () async {
+      final config = CriterionConfig(
+        reportDir: tempDir.path,
+        generateHtmlReport: true,
+        exportJson: false,
+        useKbssd: false,
+      );
+
+      await criterion('Param Test Suite', (c) {
+        c.benchWith<void, int>(
+          'fib',
+          [10, 20],
+          (n) {},
+          samples: 5,
+          warmupDuration: const Duration(milliseconds: 5),
+        );
+      }, config: config);
+
+      final htmlFile = File('${tempDir.path}/index.html');
+      expect(htmlFile.existsSync(), isTrue);
+
+      final htmlContent = htmlFile.readAsStringSync();
+      expect(htmlContent, contains('"parameterGroup":"fib"'));
+      expect(htmlContent, contains('"parameterValue":10'));
+      expect(htmlContent, contains('"parameterValue":20'));
+      expect(htmlContent, contains('parameterGroups'));
+      expect(htmlContent, contains('generateParameterCharts'));
     });
   });
 }

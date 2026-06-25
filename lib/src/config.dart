@@ -1,4 +1,4 @@
-// Copyright 2026 Sigurd Meldgaard
+// Copyright 2026 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -22,6 +22,18 @@ final class CriterionConfig {
 
   /// The directory where the reports will be written.
   final String reportDir;
+
+  /// Whether to export the results to history.
+  final bool exportHistory;
+
+  /// Whether to check for regressions against history.
+  final bool checkRegressions;
+
+  /// Whether to enable CPU profiling and export profile files.
+  final bool cpuProfiling;
+
+  /// The path to the history file.
+  final String historyFile;
 
   /// Whether to use Kernel-Based Steady-State Detection (KBSSD) for adaptive benchmarking.
   final bool useKbssd;
@@ -53,6 +65,10 @@ final class CriterionConfig {
     this.generateHtmlReport = true,
     this.exportJson = true,
     this.reportDir = 'benchmark/report',
+    this.exportHistory = true,
+    this.checkRegressions = false,
+    this.cpuProfiling = false,
+    this.historyFile = 'benchmark/criterion_history.json',
     this.useKbssd = true,
     this.kbssdWindowSize = 15,
     this.kbssdStabilityRequired = 8,

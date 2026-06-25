@@ -12,14 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-/// High-performance statistical benchmarking framework.
-library;
+import '../result.dart';
 
-export 'src/criterion.dart';
-export 'src/throughput.dart';
-export 'src/config.dart';
-export 'src/result.dart';
-export 'src/blackhole.dart';
-export 'src/statistics.dart'
-    show Sample, ConfidenceInterval, BootstrapResult, OutlierAnalysis;
-export "src/comparison.dart";
+/// Stub implementation of CpuProfiler when VM/IO is not available.
+final class CpuProfiler {
+  /// Always returns null.
+  static Future<CpuProfileResult?> collect({
+    required Function fn,
+    required int iterations,
+    Function? setup,
+    String? exportPath,
+  }) async {
+    return null;
+  }
+}

@@ -1,4 +1,4 @@
-// Copyright 2026 Sigurd Meldgaard
+// Copyright 2026 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import 'dart:convert';
 import 'dart:io';
 import 'package:path/path.dart' as p;
 import 'package:criterion/criterion.dart';
@@ -195,8 +194,5 @@ Future<List<BenchmarkResult>> _runBenchmarkInWorktree(
   }
 
   final jsonContent = resultsFile.readAsStringSync();
-  final List<dynamic> jsonList = jsonDecode(jsonContent);
-  return jsonList
-      .map((j) => BenchmarkResult.fromJson(j as Map<String, dynamic>))
-      .toList();
+  return loadResults(jsonContent);
 }

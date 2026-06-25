@@ -1,4 +1,4 @@
-// Copyright 2026 Sigurd Meldgaard
+// Copyright 2026 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import "dart:convert";
 import "dart:io";
 import "package:criterion/criterion.dart";
 
@@ -38,14 +37,14 @@ void main(List<String> args) async {
   List<BenchmarkResult> afterResults;
 
   try {
-    beforeResults = _parseResults(await beforeFile.readAsString());
+    beforeResults = loadResults(await beforeFile.readAsString());
   } catch (e) {
     stderr.writeln("Error parsing ${beforeFile.path}: $e");
     exit(1);
   }
 
   try {
-    afterResults = _parseResults(await afterFile.readAsString());
+    afterResults = loadResults(await afterFile.readAsString());
   } catch (e) {
     stderr.writeln("Error parsing ${afterFile.path}: $e");
     exit(1);
@@ -53,17 +52,4 @@ void main(List<String> args) async {
 
   final comparison = compareResults(beforeResults, afterResults);
   stdout.write(comparison.toMarkdownTable());
-}
-
-List<BenchmarkResult> _parseResults(String jsonString) {
-  final decoded = jsonDecode(jsonString);
-  if (decoded is! List) {
-    throw FormatException("Expected a list of benchmark results");
-  }
-  return decoded.map((e) {
-    if (e is! Map<String, dynamic>) {
-      throw FormatException("Expected a map for benchmark result");
-    }
-    return BenchmarkResult.fromJson(e);
-  }).toList();
 }

@@ -12,14 +12,21 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-/// High-performance statistical benchmarking framework.
-library;
+/// Stub implementation of CycleCounter when VM/FFI is not available.
+final class CycleCounter {
+  /// No-op.
+  static Future<void> init() async {}
 
-export 'src/criterion.dart';
-export 'src/throughput.dart';
-export 'src/config.dart';
-export 'src/result.dart';
-export 'src/blackhole.dart';
-export 'src/statistics.dart'
-    show Sample, ConfidenceInterval, BootstrapResult, OutlierAnalysis;
-export "src/comparison.dart";
+  /// Always returns false.
+  static bool get isSupported => false;
+
+  /// Always returns 0.
+  static int read() => 0;
+
+  /// Always returns null.
+  static Future<double?> measure({
+    required Function fn,
+    required int iterations,
+    Function? setup,
+  }) async => null;
+}

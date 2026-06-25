@@ -1,4 +1,4 @@
-// Copyright 2026 Sigurd Meldgaard
+// Copyright 2026 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -24,6 +24,10 @@ import 'result.dart';
 import 'report_generator.dart';
 import 'blackhole.dart';
 import 'throughput.dart';
+import 'history.dart';
+import 'cpu_profiler.dart';
+import 'cycle_counter.dart';
+import 'package:path/path.dart' as p;
 
 /// Defines a benchmark suite and runs all registered benchmarks.
 ///
@@ -203,20 +207,154 @@ final class Criterion {
     });
   }
 
+  /// Registers a benchmark that is run with different parameters.
+  ///
+  /// The [groupName] identifies the group of parameterized benchmarks.
+  /// The [parameters] is a list of values to run the benchmark with.
+  /// The [fn] is the benchmark function.
+  ///
+  /// If [setup] is provided, it is executed before each iteration to generate
+  /// a state of type [T] for each parameter value. In this case, [fn] must
+  /// accept either [T] (the state) or both [T] and [P] (the state and the parameter).
+  ///
+  /// If [setup] is not provided, [fn] must accept [P] (the parameter).
+  ///
+  /// The [samples], [warmupDuration], and [throughput] apply to all runs.
+  /// [throughput] can be a function that returns a [Throughput] for a given parameter.
+  void benchWith<T, P>(
+    String groupName,
+    List<P> parameters,
+    Function fn, {
+    int samples = 100,
+    Duration warmupDuration = const Duration(seconds: 1),
+    Function? noOp,
+    Throughput Function(P param)? throughput,
+    FutureOr<T> Function(P param)? setup,
+  }) {
+    for (final p in parameters) {
+      final String fullName = _groupPath.isEmpty
+          ? '$groupName / $p'
+          : '${_groupPath.join(" / ")} / $groupName / $p';
+
+      final FutureOr<T> Function()? wrappedSetup = setup != null
+          ? () => setup(p)
+          : null;
+
+      final Function wrappedFn;
+      final Function? wrappedNoOp;
+
+      if (setup != null) {
+        if (fn is Function(T, P)) {
+          wrappedFn = (T state) => fn(state, p);
+        } else if (fn is Function(T)) {
+          wrappedFn = fn;
+        } else if (fn is Function(dynamic, dynamic)) {
+          // Fallback for dynamic types
+          wrappedFn = (T state) => fn(state, p);
+        } else if (fn is Function(dynamic)) {
+          wrappedFn = fn;
+        } else {
+          throw ArgumentError(
+            'fn must accept (T state) or (T state, P parameter) when setup is provided',
+          );
+        }
+
+        if (noOp != null) {
+          if (noOp is Function(T, P)) {
+            wrappedNoOp = (T state) => noOp(state, p);
+          } else if (noOp is Function(T)) {
+            wrappedNoOp = noOp;
+          } else if (noOp is Function(dynamic, dynamic)) {
+            wrappedNoOp = (T state) => noOp(state, p);
+          } else if (noOp is Function(dynamic)) {
+            wrappedNoOp = noOp;
+          } else {
+            throw ArgumentError(
+              'noOp must accept (T state) or (T state, P parameter) when setup is provided',
+            );
+          }
+        } else {
+          wrappedNoOp = null;
+        }
+      } else {
+        if (fn is Function(P)) {
+          wrappedFn = () => fn(p);
+        } else if (fn is Function(dynamic)) {
+          wrappedFn = () => fn(p);
+        } else if (fn is Function()) {
+          // If it takes no arguments, it's an error because it should take the parameter
+          throw ArgumentError(
+            'fn must accept (P parameter) when setup is not provided',
+          );
+        } else {
+          wrappedFn = () => fn(p);
+        }
+
+        if (noOp != null) {
+          if (noOp is Function(P)) {
+            wrappedNoOp = () => noOp(p);
+          } else if (noOp is Function(dynamic)) {
+            wrappedNoOp = () => noOp(p);
+          } else {
+            wrappedNoOp = () => noOp(p);
+          }
+        } else {
+          wrappedNoOp = null;
+        }
+      }
+
+      final tp = throughput != null ? throughput(p) : null;
+
+      _benchmarks.add(
+        Benchmark<T>(
+          fullName,
+          wrappedFn,
+          config: config,
+          samples: samples,
+          warmupDuration: warmupDuration,
+          noOp: wrappedNoOp,
+          throughput: tp,
+          setup: wrappedSetup,
+          parameterGroup: groupName,
+          parameterValue: p,
+        ),
+      );
+    }
+  }
+
   /// Runs all registered benchmarks and reports their results.
   Future<List<BenchmarkResult>> run() async {
+    await CycleCounter.init();
     final results = <BenchmarkResult>[];
     for (final benchmark in _benchmarks) {
       final result = await benchmark.run();
       results.add(result);
     }
     Blackhole.preventDCE();
+
+    final historyMgr = HistoryManager(config.historyFile);
+    List<BenchmarkResult>? history;
+
+    if (!env.isJson && (config.checkRegressions || config.exportHistory)) {
+      history = await historyMgr.load();
+    }
+
+    if (!env.isJson && config.checkRegressions && history != null) {
+      checkRegressions(current: results, history: history);
+    }
+
     if (env.isJson) {
       print(jsonEncode(results.map((r) => r.toJson()).toList()));
     } else {
       await ReportGenerator(config).generate(results);
       _printVariantComparisons(results);
     }
+
+    if (!env.isJson && config.exportHistory && history != null) {
+      history.addAll(results);
+      await historyMgr.save(history);
+    }
+
     return results;
   }
 
@@ -327,6 +465,12 @@ final class Benchmark<T> {
   /// The variant name, if this benchmark is part of a variant group.
   final String? variantName;
 
+  /// The parameter group name, if this benchmark is part of a parameterized group.
+  final String? parameterGroup;
+
+  /// The parameter value, if this benchmark is part of a parameterized group.
+  final Object? parameterValue;
+
   /// Creates a [Benchmark].
   Benchmark(
     this.name,
@@ -337,6 +481,8 @@ final class Benchmark<T> {
     this.warmupDuration = const Duration(seconds: 1),
     this.variantGroup,
     this.variantName,
+    this.parameterGroup,
+    this.parameterValue,
     this.throughput,
     this.setup,
   });
@@ -413,6 +559,8 @@ final class Benchmark<T> {
       outliers: mainRun.outliers,
       memory: mainRun.memory,
       instructions: mainRun.instructions,
+      cpuProfile: mainRun.cpuProfile,
+      cyclesPerIteration: mainRun.cycles,
     );
 
     MeasurementResult? noOpResult;
@@ -429,6 +577,8 @@ final class Benchmark<T> {
         outliers: noOpRun.outliers,
         memory: noOpRun.memory,
         instructions: noOpRun.instructions,
+        cpuProfile: noOpRun.cpuProfile,
+        cyclesPerIteration: noOpRun.cycles,
       );
 
       final totalTime = mainRun.sample.mean;
@@ -462,11 +612,18 @@ final class Benchmark<T> {
         netInstr = netI < 0 ? 0.0 : netI;
       }
 
+      double? netCycles;
+      if (mainRun.cycles != null && noOpRun.cycles != null) {
+        final netC = mainRun.cycles! - noOpRun.cycles!;
+        netCycles = netC < 0 ? 0.0 : netC;
+      }
+
       netResult = NetResult(
         timeNs: netTimeClamped,
         allocatedBytes: netBytes,
         allocatedObjects: netObjects,
         instructions: netInstr,
+        cycles: netCycles,
       );
     }
 
@@ -478,6 +635,8 @@ final class Benchmark<T> {
       net: netResult,
       variantGroup: variantGroup,
       variantName: variantName,
+      parameterGroup: parameterGroup,
+      parameterValue: parameterValue,
       throughput: throughput,
     );
   }
@@ -514,12 +673,43 @@ final class Benchmark<T> {
       setup: setup,
     );
 
+    // CPU Profiling
+    CpuProfileResult? cpuProfileResult;
+    if (config.cpuProfiling) {
+      final targetProfileNs = 200 * 1000 * 1000; // 200ms
+      final profileIterations = (targetProfileNs / sample.mean).round().clamp(
+        100,
+        1000000,
+      );
+      final safeName = name.replaceAll(RegExp(r'[^a-zA-Z0-9_-]'), '_');
+      final exportPath = p.join(
+        config.reportDir,
+        'profiles',
+        '$safeName.cpuprofile.json',
+      );
+      cpuProfileResult = await CpuProfiler.collect(
+        fn: targetFn,
+        iterations: profileIterations,
+        setup: setup,
+        exportPath: exportPath,
+      );
+    }
+
+    // Cycle Measurement
+    final cyclesResult = await CycleCounter.measure(
+      fn: targetFn,
+      iterations: memoryIterations,
+      setup: setup,
+    );
+
     return _MeasurementRun(
       sample: sample,
       bootstrap: bootstrapResult,
       outliers: outlierAnalysis,
       memory: memoryResult,
       instructions: instructionResult,
+      cpuProfile: cpuProfileResult,
+      cycles: cyclesResult,
     );
   }
 
@@ -744,6 +934,8 @@ final class Benchmark<T> {
             '  memory: ${formatBytes(memory.allocatedBytesPerIteration!)} allocated '
             '(${formatCount(memory.allocatedObjectsPerIteration!)} objects) per iteration',
           );
+          _printTopAllocations(memory.classAllocations);
+          _printCpuProfile(mainRun.cpuProfile);
         }
         print(
           '  RSS:    ${formatRssDelta(memory.rssDeltaBytes)} (native heap growth)',
@@ -754,6 +946,10 @@ final class Benchmark<T> {
         print(
           '  instructions: ${formatCount(instructions.instructionsPerIteration)} per iteration',
         );
+      }
+
+      if (mainRun.cycles != null) {
+        print('  cycles:       ${formatCount(mainRun.cycles!)} per iteration');
       }
     } else {
       // Time metrics
@@ -783,6 +979,8 @@ final class Benchmark<T> {
             '[Overhead: ${bold(formatBytes(overheadBytes))}] '
             '[Net: ${bold(formatBytes(netBytesClamped))}]',
           );
+          _printTopAllocations(totalMemory.classAllocations);
+          _printCpuProfile(mainRun.cpuProfile);
         }
         print(
           '  RSS:    [Total: ${bold(formatRssDelta(totalMemory.rssDeltaBytes))}] '
@@ -806,6 +1004,20 @@ final class Benchmark<T> {
           '[Net: ${bold(formatCount(netCountClamped))}]',
         );
       }
+
+      // Cycle metrics
+      final totalCycles = mainRun.cycles;
+      final noOpCycles = noOpRun.cycles;
+      if (totalCycles != null && noOpCycles != null) {
+        final netCycles = totalCycles - noOpCycles;
+        final netCyclesClamped = netCycles < 0 ? 0.0 : netCycles;
+
+        print(
+          '  cycles:       [Total: ${bold(formatCount(totalCycles))}] '
+          '[Overhead: ${bold(formatCount(noOpCycles))}] '
+          '[Net: ${bold(formatCount(netCyclesClamped))}]',
+        );
+      }
     }
     final meanTimeNs = noOpRun != null
         ? (mainRun.sample.mean - noOpRun.sample.mean).clamp(
@@ -816,6 +1028,55 @@ final class Benchmark<T> {
     final throughputStr = _formatThroughput(meanTimeNs);
     if (throughputStr != null) {
       print('  throughput: $throughputStr');
+    }
+  }
+
+  void _printTopAllocations(List<ClassAllocation>? allocations) {
+    if (allocations == null || allocations.isEmpty) return;
+    // Filter out zero allocations to keep output clean
+    final activeAllocs = allocations
+        .where((a) => a.bytes > 0 || a.instances > 0)
+        .toList();
+    if (activeAllocs.isEmpty) return;
+
+    // Sort by bytes descending, then instances descending
+    final sortedAllocs = [...activeAllocs]
+      ..sort((a, b) {
+        final cmp = b.bytes.compareTo(a.bytes);
+        if (cmp != 0) return cmp;
+        return b.instances.compareTo(a.instances);
+      });
+    final top = sortedAllocs.take(5).toList();
+    if (top.isNotEmpty) {
+      print('    Top allocations:');
+      for (final alloc in top) {
+        print(
+          '      - ${alloc.className} (${alloc.libraryUri}): '
+          '${formatBytes(alloc.bytes.toDouble())} (${alloc.instances} instances)',
+        );
+      }
+    }
+  }
+
+  void _printCpuProfile(CpuProfileResult? profile) {
+    if (profile == null || profile.functions.isEmpty) return;
+    final sortedFuncs = [...profile.functions]
+      ..sort((a, b) {
+        final cmp = b.exclusiveTicks.compareTo(a.exclusiveTicks);
+        if (cmp != 0) return cmp;
+        return b.inclusiveTicks.compareTo(a.inclusiveTicks);
+      });
+    final top = sortedFuncs.take(5).toList();
+    if (top.isNotEmpty) {
+      print('    Top CPU functions:');
+      for (final func in top) {
+        final total = profile.sampleCount;
+        final pct = total > 0 ? (func.exclusiveTicks / total) * 100 : 0.0;
+        print(
+          '      - ${func.name} (${func.resolvedUrl}): '
+          '${func.exclusiveTicks} ticks (${pct.toStringAsFixed(1)}%)',
+        );
+      }
     }
   }
 
@@ -947,6 +1208,8 @@ final class _MeasurementRun {
   final OutlierAnalysis outliers;
   final MemoryResult? memory;
   final InstructionResult? instructions;
+  final CpuProfileResult? cpuProfile;
+  final double? cycles;
 
   _MeasurementRun({
     required this.sample,
@@ -954,5 +1217,7 @@ final class _MeasurementRun {
     required this.outliers,
     required this.memory,
     required this.instructions,
+    this.cpuProfile,
+    this.cycles,
   });
 }

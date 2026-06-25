@@ -12,14 +12,4 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-/// High-performance statistical benchmarking framework.
-library;
-
-export 'src/criterion.dart';
-export 'src/throughput.dart';
-export 'src/config.dart';
-export 'src/result.dart';
-export 'src/blackhole.dart';
-export 'src/statistics.dart'
-    show Sample, ConfidenceInterval, BootstrapResult, OutlierAnalysis;
-export "src/comparison.dart";
+export 'cycle_counter/stub.dart' if (dart.library.io) 'cycle_counter/vm.dart';

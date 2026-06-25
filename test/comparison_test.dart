@@ -1,4 +1,4 @@
-// Copyright 2026 Sigurd Meldgaard
+// Copyright 2026 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -26,10 +26,12 @@ void main() {
       double? allocatedBytes,
       double? allocatedObjects,
       double? instructions,
+      String platform = '',
     }) {
       return BenchmarkResult(
         name: name,
         iterations: 100,
+        platform: platform,
         primary: MeasurementResult(
           sampleTimes: [mean],
           mean: mean,

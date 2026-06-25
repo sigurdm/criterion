@@ -1,4 +1,4 @@
-// Copyright 2026 Sigurd Meldgaard
+// Copyright 2026 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -78,6 +78,7 @@ final class ReportGenerator {
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Criterion Benchmark Report</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@sgratzl/chartjs-chart-boxplot"></script>
     <style>
         body {
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
@@ -198,6 +199,12 @@ final class ReportGenerator {
                         <input type="checkbox" id="variants-mode"> Enable Variants View
                     </label>
                 </div>
+                <div id="parameters-mode-container" style="display:none; margin-top: 15px;">
+                    <h3>Parameters Mode</h3>
+                    <label>
+                        <input type="checkbox" id="parameters-mode"> Enable Parameters View
+                    </label>
+                </div>
             </div>
             <div class="main-content">
                 <div id="single-view">
@@ -231,8 +238,54 @@ final class ReportGenerator {
                         </div>
                     </div>
 
+                    <div class="card" id="memory-allocations-card" style="display:none;">
+                        <h3>Detailed Memory Allocations (Top 10)</h3>
+                        <table id="memory-allocations-table">
+                            <thead>
+                                <tr>
+                                    <th>Class</th>
+                                    <th>Library</th>
+                                    <th>Bytes</th>
+                                    <th>Instances</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <!-- Dynamic rows -->
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="card" id="cpu-profile-card" style="display:none;">
+                        <h3>CPU Profile (Top 10)</h3>
+                        <table id="cpu-profile-table">
+                            <thead>
+                                <tr>
+                                    <th>Function</th>
+                                    <th>Source</th>
+                                    <th>Ticks</th>
+                                    <th>Percentage</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <!-- Dynamic rows -->
+                            </tbody>
+                        </table>
+                    </div>
+
                     <div class="card" id="ffi-card" style="display:none;">
                         <h3>FFI Overhead Analysis</h3>
+                        <table id="ffi-table" style="margin-bottom: 15px;">
+                            <thead>
+                                <tr>
+                                    <th>Metric</th>
+                                    <th>Total</th>
+                                    <th>Overhead (FFI)</th>
+                                    <th>Net (Logic)</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <!-- Dynamic rows -->
+                            </tbody>
+                        </table>
                         <div class="chart-container">
                             <canvas id="ffiChart"></canvas>
                         </div>
@@ -259,6 +312,12 @@ final class ReportGenerator {
                     <h2>Variant Groups Comparison</h2>
                     <div id="variant-groups-container">
                         <!-- Dynamic variant groups charts will be inserted here -->
+                    </div>
+                </div>
+                <div id="parameters-view" style="display:none;">
+                    <h2>Parameter Complexity Analysis</h2>
+                    <div id="parameter-groups-container">
+                        <!-- Dynamic parameter groups charts will be inserted here -->
                     </div>
                 </div>
             </div>
@@ -352,6 +411,7 @@ final class ReportGenerator {
         let compareKdeChart = null;
         let compareBarChart = null;
         const variantCharts = [];
+        const parameterCharts = [];
 
         // Colors
         const colors = [
@@ -398,6 +458,18 @@ final class ReportGenerator {
         });
         const hasVariants = Object.keys(variantGroups).length > 0;
 
+        // Detect parameters
+        const parameterGroups = {};
+        data.forEach(bench => {
+            if (bench.parameterGroup) {
+                if (!parameterGroups[bench.parameterGroup]) {
+                    parameterGroups[bench.parameterGroup] = [];
+                }
+                parameterGroups[bench.parameterGroup].push(bench);
+            }
+        });
+        const hasParameters = Object.keys(parameterGroups).length > 0;
+
         // Init
         const benchmarkList = document.getElementById('benchmark-list');
         data.forEach((bench, index) => {
@@ -442,18 +514,32 @@ final class ReportGenerator {
         if (hasVariants) {
             document.getElementById('variants-mode-container').style.display = 'block';
         }
+        if (hasParameters) {
+            document.getElementById('parameters-mode-container').style.display = 'block';
+        }
 
         const variantsModeCheckbox = document.getElementById('variants-mode');
         let variantsMode = false;
         let variantChartsGenerated = false;
 
+        const parametersModeCheckbox = document.getElementById('parameters-mode');
+        let parametersMode = false;
+        let parameterChartsGenerated = false;
+
         const compareModeCheckbox = document.getElementById('compare-mode');
         compareModeCheckbox.addEventListener('change', (e) => {
             compareMode = e.target.checked;
-            if (compareMode && hasVariants) {
-                variantsModeCheckbox.checked = false;
-                variantsMode = false;
-                document.getElementById('variants-view').style.display = 'none';
+            if (compareMode) {
+                if (hasVariants) {
+                    variantsModeCheckbox.checked = false;
+                    variantsMode = false;
+                    document.getElementById('variants-view').style.display = 'none';
+                }
+                if (hasParameters) {
+                    parametersModeCheckbox.checked = false;
+                    parametersMode = false;
+                    document.getElementById('parameters-view').style.display = 'none';
+                }
             }
             // Reset selections
             data.forEach((_, i) => {
@@ -478,6 +564,11 @@ final class ReportGenerator {
             if (variantsMode) {
                 compareModeCheckbox.checked = false;
                 compareMode = false;
+                if (hasParameters) {
+                    parametersModeCheckbox.checked = false;
+                    parametersMode = false;
+                    document.getElementById('parameters-view').style.display = 'none';
+                }
                 data.forEach((_, i) => {
                     document.getElementById(`bench-\${i}`).checked = false;
                 });
@@ -494,6 +585,42 @@ final class ReportGenerator {
             } else {
                 document.getElementById('single-view').style.display = 'block';
                 document.getElementById('variants-view').style.display = 'none';
+                if (data.length > 0) {
+                    document.getElementById('bench-0').checked = true;
+                    selectedBenchmarks = [data[0]];
+                    activeBenchmark = data[0];
+                    updateSingleView();
+                }
+            }
+        });
+
+        parametersModeCheckbox.addEventListener('change', (e) => {
+            parametersMode = e.target.checked;
+            if (parametersMode) {
+                compareModeCheckbox.checked = false;
+                compareMode = false;
+                if (hasVariants) {
+                    variantsModeCheckbox.checked = false;
+                    variantsMode = false;
+                    document.getElementById('variants-view').style.display = 'none';
+                }
+                data.forEach((_, i) => {
+                    document.getElementById(`bench-\${i}`).checked = false;
+                });
+                selectedBenchmarks = [];
+                activeBenchmark = null;
+                
+                document.getElementById('single-view').style.display = 'none';
+                document.getElementById('comparison-view').style.display = 'none';
+                document.getElementById('variants-view').style.display = 'none';
+                document.getElementById('parameters-view').style.display = 'block';
+                if (!parameterChartsGenerated) {
+                    generateParameterCharts();
+                    parameterChartsGenerated = true;
+                }
+            } else {
+                document.getElementById('single-view').style.display = 'block';
+                document.getElementById('parameters-view').style.display = 'none';
                 if (data.length > 0) {
                     document.getElementById('bench-0').checked = true;
                     selectedBenchmarks = [data[0]];
@@ -588,6 +715,11 @@ final class ReportGenerator {
             if (primary.instructions) {
                 html += `
                     <tr><td>Instructions</td><td class="metric-value">\${formatCount(primary.instructions.instructionsPerIteration)}</td><td>-</td></tr>
+                `;
+            }
+            if (primary.cyclesPerIteration !== null && primary.cyclesPerIteration !== undefined) {
+                html += `
+                    <tr><td>CPU Cycles</td><td class="metric-value">\${formatCount(primary.cyclesPerIteration)}</td><td>-</td></tr>
                 `;
             }
             if (activeBenchmark.throughput) {
@@ -694,10 +826,132 @@ final class ReportGenerator {
                 memoryCard.style.display = 'none';
             }
 
+            // Detailed Memory Allocations Table
+            const memoryAllocationsCard = document.getElementById('memory-allocations-card');
+            if (primary.memory && primary.memory.classAllocations && primary.memory.classAllocations.length > 0) {
+                memoryAllocationsCard.style.display = 'block';
+                // Sort by bytes descending, then instances descending
+                const sortedAllocs = [...primary.memory.classAllocations]
+                    .filter(a => a.bytes > 0 || a.instances > 0)
+                    .sort((a, b) => {
+                        const cmp = b.bytes - a.bytes;
+                        if (cmp !== 0) return cmp;
+                        return b.instances - a.instances;
+                    });
+                
+                const top10 = sortedAllocs.slice(0, 10);
+                const tbody = document.querySelector('#memory-allocations-table tbody');
+                tbody.innerHTML = '';
+                if (top10.length > 0) {
+                    top10.forEach(alloc => {
+                        const tr = document.createElement('tr');
+                        tr.innerHTML = `
+                            <td>\${alloc.className}</td>
+                            <td style="font-size: 0.85em; color: #666; word-break: break-all;">\${alloc.libraryUri}</td>
+                            <td class="metric-value">\${formatBytes(alloc.bytes)}</td>
+                            <td class="metric-value">\${formatCount(alloc.instances)}</td>
+                        `;
+                        tbody.appendChild(tr);
+                    });
+                } else {
+                     memoryAllocationsCard.style.display = 'none';
+                }
+            } else {
+                memoryAllocationsCard.style.display = 'none';
+            }
+
+            // CPU Profile Table
+            const cpuProfileCard = document.getElementById('cpu-profile-card');
+            if (primary.cpuProfile && primary.cpuProfile.functions && primary.cpuProfile.functions.length > 0) {
+                cpuProfileCard.style.display = 'block';
+                // Sort by exclusive ticks descending, then inclusive ticks descending
+                const sortedFuncs = [...primary.cpuProfile.functions]
+                    .sort((a, b) => {
+                        const cmp = b.exclusiveTicks - a.exclusiveTicks;
+                        if (cmp !== 0) return cmp;
+                        return b.inclusiveTicks - a.inclusiveTicks;
+                    });
+                
+                const top10 = sortedFuncs.slice(0, 10);
+                const tbody = document.querySelector('#cpu-profile-table tbody');
+                tbody.innerHTML = '';
+                if (top10.length > 0) {
+                    top10.forEach(func => {
+                        const tr = document.createElement('tr');
+                        const total = primary.cpuProfile.sampleCount;
+                        const pct = total > 0 ? (func.exclusiveTicks / total) * 100 : 0.0;
+                        tr.innerHTML = `
+                            <td>\${func.name}</td>
+                            <td style="font-size: 0.85em; color: #666; word-break: break-all;">\${func.resolvedUrl}</td>
+                            <td class="metric-value">\${func.exclusiveTicks}</td>
+                            <td class="metric-value">\${pct.toFixed(1)}%</td>
+                        `;
+                        tbody.appendChild(tr);
+                    });
+                } else {
+                     cpuProfileCard.style.display = 'none';
+                }
+            } else {
+                cpuProfileCard.style.display = 'none';
+            }
+
             // FFI Chart
             const ffiCard = document.getElementById('ffi-card');
             if (activeBenchmark.noOp && activeBenchmark.net) {
                 ffiCard.style.display = 'block';
+                
+                // Populate FFI Table
+                const tbody = document.querySelector('#ffi-table tbody');
+                tbody.innerHTML = '';
+                
+                // Time row
+                let tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td>Time</td>
+                    <td class="metric-value">\${formatDuration(activeBenchmark.primary.mean)}</td>
+                    <td class="metric-value">\${formatDuration(activeBenchmark.noOp.mean)}</td>
+                    <td class="metric-value">\${formatDuration(activeBenchmark.net.timeNs)}</td>
+                `;
+                tbody.appendChild(tr);
+
+                // Memory row (if available)
+                if (activeBenchmark.primary.memory && activeBenchmark.noOp.memory && activeBenchmark.net.allocatedBytes !== undefined && activeBenchmark.net.allocatedBytes !== null) {
+                    tr = document.createElement('tr');
+                    tr.innerHTML = `
+                        <td>Allocated Bytes</td>
+                        <td class="metric-value">\${formatBytes(activeBenchmark.primary.memory.allocatedBytesPerIteration)}</td>
+                        <td class="metric-value">\${formatBytes(activeBenchmark.noOp.memory.allocatedBytesPerIteration)}</td>
+                        <td class="metric-value">\${formatBytes(activeBenchmark.net.allocatedBytes)}</td>
+                    `;
+                    tbody.appendChild(tr);
+                }
+
+                // Instructions row (if available)
+                if (activeBenchmark.primary.instructions && activeBenchmark.noOp.instructions && activeBenchmark.net.instructions !== undefined && activeBenchmark.net.instructions !== null) {
+                    tr = document.createElement('tr');
+                    tr.innerHTML = `
+                        <td>Instructions</td>
+                        <td class="metric-value">\${formatCount(activeBenchmark.primary.instructions.instructionsPerIteration)}</td>
+                        <td class="metric-value">\${formatCount(activeBenchmark.noOp.instructions.instructionsPerIteration)}</td>
+                        <td class="metric-value">\${formatCount(activeBenchmark.net.instructions)}</td>
+                    `;
+                    tbody.appendChild(tr);
+                }
+
+                // Cycles row (if available)
+                if (activeBenchmark.primary.cyclesPerIteration !== null && activeBenchmark.primary.cyclesPerIteration !== undefined &&
+                    activeBenchmark.noOp.cyclesPerIteration !== null && activeBenchmark.noOp.cyclesPerIteration !== undefined &&
+                    activeBenchmark.net.cycles !== undefined && activeBenchmark.net.cycles !== null) {
+                    tr = document.createElement('tr');
+                    tr.innerHTML = `
+                        <td>CPU Cycles</td>
+                        <td class="metric-value">\${formatCount(activeBenchmark.primary.cyclesPerIteration)}</td>
+                        <td class="metric-value">\${formatCount(activeBenchmark.noOp.cyclesPerIteration)}</td>
+                        <td class="metric-value">\${formatCount(activeBenchmark.net.cycles)}</td>
+                    `;
+                    tbody.appendChild(tr);
+                }
+
                 if (ffiChart) ffiChart.destroy();
 
                 ffiChart = new Chart(document.getElementById('ffiChart'), {
@@ -826,18 +1080,20 @@ final class ReportGenerator {
 
                 const ctx = document.getElementById(`variant-chart-\${groupIndex}`).getContext('2d');
                 const labels = benches.map(b => b.variantName || b.name);
-                const chartData = benches.map(b => b.primary.mean);
+                const chartData = benches.map(b => b.primary.sampleTimes);
 
                 const chart = new Chart(ctx, {
-                    type: 'bar',
+                    type: 'violin',
                     data: {
                         labels: labels,
                         datasets: [{
-                            label: 'Mean Time',
+                            label: 'Distribution',
                             data: chartData,
                             backgroundColor: getBgColors(benches.length),
                             borderColor: getColors(benches.length),
-                            borderWidth: 1
+                            borderWidth: 1,
+                            outlierColor: '#999999',
+                            itemRadius: 0
                         }]
                     },
                     options: {
@@ -851,6 +1107,69 @@ final class ReportGenerator {
                     }
                 });
                 variantCharts.push(chart);
+            });
+        }
+
+        function generateParameterCharts() {
+            const container = document.getElementById('parameter-groups-container');
+            container.innerHTML = '';
+            parameterCharts.forEach(chart => chart.destroy());
+            parameterCharts.length = 0;
+
+            Object.entries(parameterGroups).forEach(([groupName, benches], groupIndex) => {
+                const card = document.createElement('div');
+                card.className = 'card';
+                card.innerHTML = `
+                    <h3>\${groupName}</h3>
+                    <div class="chart-container">
+                        <canvas id="parameter-chart-\${groupIndex}"></canvas>
+                    </div>
+                `;
+                container.appendChild(card);
+
+                // Sort benches by parameter value
+                const sortedBenches = [...benches].sort((a, b) => {
+                    const aVal = a.parameterValue;
+                    const bVal = b.parameterValue;
+                    if (typeof aVal === 'number' && typeof bVal === 'number') {
+                        return aVal - bVal;
+                    }
+                    return String(aVal).localeCompare(String(bVal));
+                });
+
+                const ctx = document.getElementById(`parameter-chart-\${groupIndex}`).getContext('2d');
+                const labels = sortedBenches.map(b => b.parameterValue);
+                const chartData = sortedBenches.map(b => b.primary.mean);
+
+                const chart = new Chart(ctx, {
+                    type: 'line',
+                    data: {
+                        labels: labels,
+                        datasets: [{
+                            label: 'Mean Time',
+                            data: chartData,
+                            backgroundColor: bgColors[0],
+                            borderColor: colors[0],
+                            borderWidth: 2,
+                            fill: false,
+                            tension: 0.1
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        scales: {
+                            x: {
+                                title: { display: true, text: 'Parameter' }
+                            },
+                            y: {
+                                title: { display: true, text: 'Time' },
+                                ticks: { callback: value => formatDuration(value) }
+                            }
+                        }
+                    }
+                });
+                parameterCharts.push(chart);
             });
         }
     </script>
