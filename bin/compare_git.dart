@@ -176,7 +176,7 @@ Future<List<BenchmarkResult>> _runBenchmarkInWorktree(
   print('Running benchmark in $worktreePath...');
   final runResult = await Process.run(dartExe, [
     'run',
-    'bin/run.dart',
+    'criterion:run',
     relativeBenchmarkPath,
     ...extraArgs,
   ], workingDirectory: worktreePath);
