@@ -213,3 +213,10 @@ kernel.perf_event_paranoid=1
 ## License
 
 Apache License, Version 2.0. See [LICENSE](LICENSE).
+
+---
+
+## Disclaimer
+
+This is not an official Google product.
+
