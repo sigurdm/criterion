@@ -356,6 +356,9 @@ void main() {
 ### Detailed Memory Profiling
 ![Memory Profile](doc/images/memory_profile.png)
 
+### Historical Performance Trend Timeline
+![Historical Performance Trend Timeline](doc/images/history_timeline.png)
+
 ### CPU Profiling
 ![CPU Profile](doc/images/cpu_profile.png)
 

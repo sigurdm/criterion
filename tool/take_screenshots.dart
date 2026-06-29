@@ -17,7 +17,10 @@ import 'package:puppeteer/puppeteer.dart';
 import 'package:path/path.dart' as p;
 
 void main() async {
-  final reportPath = p.absolute('benchmark/screenshots_report/index.html');
+  var reportPath = p.absolute('benchmark/screenshots_report/index.html');
+  if (!File(reportPath).existsSync()) {
+    reportPath = p.absolute('benchmark/report/index.html');
+  }
   if (!File(reportPath).existsSync()) {
     print('Report not found at $reportPath');
     exit(1);
@@ -133,6 +136,23 @@ void main() async {
     ).writeAsBytesSync(bytes);
   } catch (e) {
     print('Failed to take variants comparison screenshot: $e');
+  }
+
+  // 6. Historical Performance Trends (Click "Enable History View")
+  try {
+    print('Taking history timeline screenshot...');
+    await page.goto(
+      'file://$reportPath?animate=false&history=true',
+      wait: Until.networkIdle,
+    );
+    await Future.delayed(Duration(milliseconds: 500));
+    final historyView = await page.$('#history-view');
+    final bytes = await historyView.screenshot();
+    File(
+      p.join(outputDir.path, 'history_timeline.png'),
+    ).writeAsBytesSync(bytes);
+  } catch (e) {
+    print('Failed to take history timeline screenshot: $e');
   }
 
   await browser.close();

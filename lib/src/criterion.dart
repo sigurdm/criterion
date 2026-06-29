@@ -335,7 +335,10 @@ final class Criterion {
     final historyMgr = HistoryManager(config.historyFile);
     List<BenchmarkResult>? history;
 
-    if (!env.isJson && (config.checkRegressions || config.exportHistory)) {
+    if (!env.isJson &&
+        (config.checkRegressions ||
+            config.exportHistory ||
+            config.generateHtmlReport)) {
       history = await historyMgr.load();
     }
 
@@ -343,16 +346,17 @@ final class Criterion {
       checkRegressions(current: results, history: history);
     }
 
+    final fullHistory = history != null ? [...history, ...results] : results;
+
     if (env.isJson) {
       print(jsonEncode(results.map((r) => r.toJson()).toList()));
     } else {
-      await ReportGenerator(config).generate(results);
+      await ReportGenerator(config).generate(results, history: fullHistory);
       _printVariantComparisons(results);
     }
 
     if (!env.isJson && config.exportHistory && history != null) {
-      history.addAll(results);
-      await historyMgr.save(history);
+      await historyMgr.save(fullHistory);
     }
 
     return results;

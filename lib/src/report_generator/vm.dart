@@ -26,7 +26,10 @@ final class ReportGenerator {
   ReportGenerator(this.config);
 
   /// Generates the enabled reports for the given [results].
-  Future<void> generate(List<BenchmarkResult> results) async {
+  Future<void> generate(
+    List<BenchmarkResult> results, {
+    List<BenchmarkResult>? history,
+  }) async {
     if (!config.exportJson && !config.generateHtmlReport) {
       return;
     }
@@ -41,7 +44,7 @@ final class ReportGenerator {
     }
 
     if (config.generateHtmlReport) {
-      await _generateHtml(results, directory);
+      await _generateHtml(results, directory, history: history);
     }
   }
 
@@ -59,16 +62,23 @@ final class ReportGenerator {
 
   Future<void> _generateHtml(
     List<BenchmarkResult> results,
-    Directory directory,
-  ) async {
+    Directory directory, {
+    List<BenchmarkResult>? history,
+  }) async {
     final file = File('${directory.path}/index.html');
-    final htmlContent = _buildHtml(results);
+    final htmlContent = _buildHtml(results, history: history);
     await file.writeAsString(htmlContent);
     print('Generated HTML report at: ${file.path}');
   }
 
-  String _buildHtml(List<BenchmarkResult> results) {
+  String _buildHtml(
+    List<BenchmarkResult> results, {
+    List<BenchmarkResult>? history,
+  }) {
     final jsonResults = jsonEncode(results.map((r) => r.toJson()).toList());
+    final jsonHistory = jsonEncode(
+      (history ?? []).map((r) => r.toJson()).toList(),
+    );
 
     return '''
 <!DOCTYPE html>
@@ -205,6 +215,12 @@ final class ReportGenerator {
                         <input type="checkbox" id="parameters-mode"> Enable Parameters View
                     </label>
                 </div>
+                <div id="history-mode-container" style="display:none; margin-top: 15px;">
+                    <h3>History Mode</h3>
+                    <label>
+                        <input type="checkbox" id="history-mode"> Enable History View
+                    </label>
+                </div>
             </div>
             <div class="main-content">
                 <div id="single-view">
@@ -289,6 +305,11 @@ final class ReportGenerator {
                         <div class="chart-container">
                             <canvas id="ffiChart"></canvas>
                         </div>
+                    <div class="card" id="history-trend-card" style="display:none;">
+                        <h3>Performance Over Time (Commits)</h3>
+                        <div class="chart-container">
+                            <canvas id="historyTrendChart"></canvas>
+                        </div>
                     </div>
                 </div>
                 
@@ -320,13 +341,21 @@ final class ReportGenerator {
                         <!-- Dynamic parameter groups charts will be inserted here -->
                     </div>
                 </div>
+                <div id="history-view" style="display:none;">
+                    <h2>Historical Performance Trends</h2>
+                    <div id="history-groups-container">
+                        <!-- Dynamic history charts will be inserted here -->
+                    </div>
+                </div>
             </div>
         </div>
     </div>
 
     <script>
         const data = $jsonResults;
+        const historyData = $jsonHistory;
         console.log("Loaded data:", data);
+        console.log("Loaded history:", historyData);
 
         // Helper functions
         function formatDuration(ns) {
@@ -517,6 +546,10 @@ final class ReportGenerator {
         if (hasParameters) {
             document.getElementById('parameters-mode-container').style.display = 'block';
         }
+        const hasHistory = historyData.length > 0;
+        if (hasHistory) {
+            document.getElementById('history-mode-container').style.display = 'block';
+        }
 
         const variantsModeCheckbox = document.getElementById('variants-mode');
         let variantsMode = false;
@@ -525,6 +558,11 @@ final class ReportGenerator {
         const parametersModeCheckbox = document.getElementById('parameters-mode');
         let parametersMode = false;
         let parameterChartsGenerated = false;
+
+        const historyModeCheckbox = document.getElementById('history-mode');
+        let historyMode = false;
+        let historyChartsGenerated = false;
+        let historyCharts = [];
 
         const compareModeCheckbox = document.getElementById('compare-mode');
         compareModeCheckbox.addEventListener('change', (e) => {
@@ -540,10 +578,16 @@ final class ReportGenerator {
                     parametersMode = false;
                     document.getElementById('parameters-view').style.display = 'none';
                 }
+                if (hasHistory) {
+                    historyModeCheckbox.checked = false;
+                    historyMode = false;
+                    document.getElementById('history-view').style.display = 'none';
+                }
             }
             // Reset selections
             data.forEach((_, i) => {
-                document.getElementById(`bench-\${i}`).checked = false;
+                const el = document.getElementById(`bench-\${i}`);
+                if (el) el.checked = false;
             });
             selectedBenchmarks = [];
             activeBenchmark = null;
@@ -569,8 +613,14 @@ final class ReportGenerator {
                     parametersMode = false;
                     document.getElementById('parameters-view').style.display = 'none';
                 }
+                if (hasHistory) {
+                    historyModeCheckbox.checked = false;
+                    historyMode = false;
+                    document.getElementById('history-view').style.display = 'none';
+                }
                 data.forEach((_, i) => {
-                    document.getElementById(`bench-\${i}`).checked = false;
+                    const el = document.getElementById(`bench-\${i}`);
+                    if (el) el.checked = false;
                 });
                 selectedBenchmarks = [];
                 activeBenchmark = null;
@@ -604,8 +654,14 @@ final class ReportGenerator {
                     variantsMode = false;
                     document.getElementById('variants-view').style.display = 'none';
                 }
+                if (hasHistory) {
+                    historyModeCheckbox.checked = false;
+                    historyMode = false;
+                    document.getElementById('history-view').style.display = 'none';
+                }
                 data.forEach((_, i) => {
-                    document.getElementById(`bench-\${i}`).checked = false;
+                    const el = document.getElementById(`bench-\${i}`);
+                    if (el) el.checked = false;
                 });
                 selectedBenchmarks = [];
                 activeBenchmark = null;
@@ -630,6 +686,49 @@ final class ReportGenerator {
             }
         });
 
+        historyModeCheckbox.addEventListener('change', (e) => {
+            historyMode = e.target.checked;
+            if (historyMode) {
+                compareModeCheckbox.checked = false;
+                compareMode = false;
+                if (hasVariants) {
+                    variantsModeCheckbox.checked = false;
+                    variantsMode = false;
+                    document.getElementById('variants-view').style.display = 'none';
+                }
+                if (hasParameters) {
+                    parametersModeCheckbox.checked = false;
+                    parametersMode = false;
+                    document.getElementById('parameters-view').style.display = 'none';
+                }
+                data.forEach((_, i) => {
+                    const el = document.getElementById(`bench-\${i}`);
+                    if (el) el.checked = false;
+                });
+                selectedBenchmarks = [];
+                activeBenchmark = null;
+                
+                document.getElementById('single-view').style.display = 'none';
+                document.getElementById('comparison-view').style.display = 'none';
+                document.getElementById('variants-view').style.display = 'none';
+                document.getElementById('parameters-view').style.display = 'none';
+                document.getElementById('history-view').style.display = 'block';
+                if (!historyChartsGenerated) {
+                    generateHistoryCharts();
+                    historyChartsGenerated = true;
+                }
+            } else {
+                document.getElementById('single-view').style.display = 'block';
+                document.getElementById('history-view').style.display = 'none';
+                if (data.length > 0) {
+                    document.getElementById('bench-0').checked = true;
+                    selectedBenchmarks = [data[0]];
+                    activeBenchmark = data[0];
+                    updateSingleView();
+                }
+            }
+        });
+
         // URL Parameter handling for automation/screenshots
         const urlParams = new URLSearchParams(window.location.search);
         
@@ -640,9 +739,17 @@ final class ReportGenerator {
 
         const benchParam = urlParams.get('bench');
         const compareParam = urlParams.get('compare');
+        const historyParam = urlParams.get('history');
         const selectParam = urlParams.get('select');
 
-        if (compareParam === 'true') {
+        if (historyParam === 'true') {
+            historyModeCheckbox.checked = true;
+            historyMode = true;
+            document.getElementById('single-view').style.display = 'none';
+            document.getElementById('history-view').style.display = 'block';
+            generateHistoryCharts();
+            historyChartsGenerated = true;
+        } else if (compareParam === 'true') {
             compareModeCheckbox.checked = true;
             compareMode = true;
             document.getElementById('single-view').style.display = 'none';
@@ -896,8 +1003,7 @@ final class ReportGenerator {
             }
 
             // FFI Chart
-            const ffiCard = document.getElementById('ffi-card');
-            if (activeBenchmark.noOp && activeBenchmark.net) {
+            const ffiCard = document.getElementById('ffi-card');            if (activeBenchmark.noOp && activeBenchmark.net) {
                 ffiCard.style.display = 'block';
                 
                 // Populate FFI Table
@@ -959,41 +1065,74 @@ final class ReportGenerator {
                     data: {
                         labels: ['Time (ns)'],
                         datasets: [
-                            {
-                                label: 'Total',
-                                data: [activeBenchmark.primary.mean],
-                                backgroundColor: bgColors[0],
-                                borderColor: colors[0],
-                                borderWidth: 1
-                            },
-                            {
-                                label: 'Overhead',
-                                data: [activeBenchmark.noOp.mean],
-                                backgroundColor: bgColors[1],
-                                borderColor: colors[1],
-                                borderWidth: 1
-                            },
-                            {
-                                label: 'Net',
-                                data: [activeBenchmark.net.timeNs],
-                                backgroundColor: bgColors[2],
-                                borderColor: colors[2],
-                                borderWidth: 1
-                            }
+                            { label: 'Total', data: [activeBenchmark.primary.mean], backgroundColor: bgColors[0], borderColor: colors[0], borderWidth: 1 },
+                            { label: 'FFI Overhead', data: [activeBenchmark.noOp.mean], backgroundColor: bgColors[1], borderColor: colors[1], borderWidth: 1 },
+                            { label: 'Net Logic', data: [activeBenchmark.net.timeNs], backgroundColor: bgColors[2], borderColor: colors[2], borderWidth: 1 }
                         ]
                     },
                     options: {
                         responsive: true,
                         maintainAspectRatio: false,
                         scales: {
-                            y: {
-                                ticks: { callback: value => formatDuration(value) }
-                            }
+                            y: { ticks: { callback: value => formatDuration(value) } }
                         }
                     }
                 });
             } else {
                 ffiCard.style.display = 'none';
+            }
+
+            // History Trend Chart for active benchmark
+            const singleHistory = historyData.filter(h => h.name === activeBenchmark.name && h.platform === activeBenchmark.platform);
+            const historyCard = document.getElementById('history-trend-card');
+            if (singleHistory.length > 1) {
+                historyCard.style.display = 'block';
+                const ctx = document.getElementById('historyTrendChart').getContext('2d');
+                if (window.activeHistoryChart) window.activeHistoryChart.destroy();
+
+                const sortedHistory = [...singleHistory].sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+                const labels = sortedHistory.map(h => h.gitCommit ? h.gitCommit.shortHash : new Date(h.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}));
+                const chartData = sortedHistory.map(h => h.primary.mean);
+
+                window.activeHistoryChart = new Chart(ctx, {
+                    type: 'line',
+                    data: {
+                        labels: labels,
+                        datasets: [{
+                            label: 'Mean Time',
+                            data: chartData,
+                            backgroundColor: bgColors[0],
+                            borderColor: colors[0],
+                            borderWidth: 2,
+                            fill: false,
+                            tension: 0.1
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            tooltip: {
+                                callbacks: {
+                                    label: function(context) {
+                                        const h = sortedHistory[context.dataIndex];
+                                        let msg = formatDuration(h.primary.mean);
+                                        if (h.gitCommit) {
+                                            msg += ` (\${h.gitCommit.shortHash}: \${h.gitCommit.message})`;
+                                        }
+                                        return msg;
+                                    }
+                                }
+                            }
+                        },
+                        scales: {
+                            x: { title: { display: true, text: 'Commit / Run' } },
+                            y: { title: { display: true, text: 'Time' }, ticks: { callback: value => formatDuration(value) } }
+                        }
+                    }
+                });
+            } else {
+                historyCard.style.display = 'none';
             }
         }
 
@@ -1171,6 +1310,83 @@ final class ReportGenerator {
                 });
                 parameterCharts.push(chart);
             });
+        }
+
+        function generateHistoryCharts() {
+            const container = document.getElementById('history-groups-container');
+            container.innerHTML = '';
+            historyCharts.forEach(chart => chart.destroy());
+            historyCharts.length = 0;
+
+            const groups = {};
+            historyData.forEach(h => {
+                const key = h.platform ? `\${h.name} (\${h.platform})` : h.name;
+                if (!groups[key]) groups[key] = [];
+                groups[key].push(h);
+            });
+
+            let chartIdx = 0;
+            Object.entries(groups).forEach(([groupName, benches]) => {
+                if (benches.length < 2) return;
+                const card = document.createElement('div');
+                card.className = 'card';
+                card.innerHTML = `
+                    <h3>\${groupName}</h3>
+                    <div class="chart-container">
+                        <canvas id="history-chart-\${chartIdx}"></canvas>
+                    </div>
+                `;
+                container.appendChild(card);
+
+                const sortedBenches = [...benches].sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+                const ctx = document.getElementById(`history-chart-\${chartIdx}`).getContext('2d');
+                const labels = sortedBenches.map(h => h.gitCommit ? h.gitCommit.shortHash : new Date(h.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}));
+                const chartData = sortedBenches.map(h => h.primary.mean);
+
+                const chart = new Chart(ctx, {
+                    type: 'line',
+                    data: {
+                        labels: labels,
+                        datasets: [{
+                            label: 'Mean Time',
+                            data: chartData,
+                            backgroundColor: bgColors[chartIdx % colors.length],
+                            borderColor: colors[chartIdx % colors.length],
+                            borderWidth: 2,
+                            fill: false,
+                            tension: 0.1
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            tooltip: {
+                                callbacks: {
+                                    label: function(context) {
+                                        const h = sortedBenches[context.dataIndex];
+                                        let msg = formatDuration(h.primary.mean);
+                                        if (h.gitCommit) {
+                                            msg += ` (\${h.gitCommit.shortHash}: \${h.gitCommit.message})`;
+                                        }
+                                        return msg;
+                                    }
+                                }
+                            }
+                        },
+                        scales: {
+                            x: { title: { display: true, text: 'Commit / Run' } },
+                            y: { title: { display: true, text: 'Time' }, ticks: { callback: value => formatDuration(value) } }
+                        }
+                    }
+                });
+                historyCharts.push(chart);
+                chartIdx++;
+            });
+
+            if (container.children.length === 0) {
+                container.innerHTML = '<div class="card"><p>Not enough historical runs recorded to display timeline trends.</p></div>';
+            }
         }
     </script>
 </body>

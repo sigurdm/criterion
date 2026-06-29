@@ -16,6 +16,47 @@ import "statistics.dart";
 import "throughput.dart";
 import "platform_info.dart" as platform_info;
 
+/// Represents Git commit information for a benchmark run.
+final class GitCommit {
+  /// The full commit hash.
+  final String hash;
+
+  /// The short commit hash (e.g. 7 characters).
+  final String shortHash;
+
+  /// The commit message.
+  final String message;
+
+  /// The commit timestamp, if available.
+  final DateTime? timestamp;
+
+  /// Creates a new [GitCommit].
+  GitCommit({
+    required this.hash,
+    required this.shortHash,
+    required this.message,
+    this.timestamp,
+  });
+
+  /// Converts to JSON.
+  Map<String, dynamic> toJson() => {
+    "hash": hash,
+    "shortHash": shortHash,
+    "message": message,
+    if (timestamp != null) "timestamp": timestamp!.toIso8601String(),
+  };
+
+  /// Creates a [GitCommit] from JSON.
+  factory GitCommit.fromJson(Map<String, dynamic> json) => GitCommit(
+    hash: json["hash"] as String,
+    shortHash: json["shortHash"] as String,
+    message: json["message"] as String,
+    timestamp: json["timestamp"] != null
+        ? DateTime.parse(json["timestamp"] as String)
+        : null,
+  );
+}
+
 /// Represents the host environment where the benchmark was run.
 final class HostEnvironment {
   /// The operating system of the host.
@@ -283,6 +324,9 @@ final class BenchmarkResult {
   /// The throughput configuration, if any.
   final Throughput? throughput;
 
+  /// Git commit information, if available.
+  final GitCommit? gitCommit;
+
   /// Creates a new [BenchmarkResult].
   BenchmarkResult({
     required this.name,
@@ -298,6 +342,7 @@ final class BenchmarkResult {
     this.parameterGroup,
     this.parameterValue,
     this.throughput,
+    GitCommit? gitCommit,
   }) : hostEnvironment = hostEnvironment ?? _defaultHostEnvironment(),
        platform =
            platform ??
@@ -305,7 +350,8 @@ final class BenchmarkResult {
              "criterion.platform",
              defaultValue: "jit",
            ),
-       timestamp = timestamp ?? DateTime.now();
+       timestamp = timestamp ?? DateTime.now(),
+       gitCommit = gitCommit ?? platform_info.localGitCommit;
 
   static HostEnvironment _defaultHostEnvironment() {
     const envOs = String.fromEnvironment(
@@ -341,6 +387,7 @@ final class BenchmarkResult {
       if (parameterValue != null)
         "parameterValue": _serializeParameterValue(parameterValue),
       if (throughput != null) "throughput": throughput!.toJson(),
+      if (gitCommit != null) "gitCommit": gitCommit!.toJson(),
     };
   }
 
@@ -354,10 +401,14 @@ final class BenchmarkResult {
   /// Creates a [BenchmarkResult] from a JSON map.
   factory BenchmarkResult.fromJson(Map<String, dynamic> json) {
     final throughputJson = json["throughput"] as Map<String, dynamic>?;
+    final gitCommitJson = json["gitCommit"] as Map<String, dynamic>?;
     return BenchmarkResult(
       throughput: throughputJson == null
           ? null
           : Throughput.fromJson(throughputJson),
+      gitCommit: gitCommitJson == null
+          ? null
+          : GitCommit.fromJson(gitCommitJson),
       name: json["name"] as String,
       iterations: json["iterations"] as int,
       primary: MeasurementResult.fromJson(

@@ -117,5 +117,24 @@ void main() {
         reason: 'Expected regression warning in: $prints',
       );
     });
+
+    test('GitCommit serialization and BenchmarkResult integration', () {
+      final commit = GitCommit(
+        hash: 'd189963ad11a35a348de84d309b66a5678d990b9',
+        shortHash: 'd189963',
+        message: 'Fix compare_git',
+        timestamp: DateTime.parse('2026-06-25T15:02:25Z'),
+      );
+
+      final json = commit.toJson();
+      expect(json['hash'], 'd189963ad11a35a348de84d309b66a5678d990b9');
+      expect(json['shortHash'], 'd189963');
+      expect(json['message'], 'Fix compare_git');
+
+      final deserialized = GitCommit.fromJson(json);
+      expect(deserialized.hash, commit.hash);
+      expect(deserialized.shortHash, commit.shortHash);
+      expect(deserialized.message, commit.message);
+    });
   });
 }

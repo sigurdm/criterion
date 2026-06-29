@@ -10,7 +10,10 @@ final class ReportGenerator {
   ReportGenerator(this.config);
 
   /// No-op on web platforms.
-  Future<void> generate(List<BenchmarkResult> results) async {
+  Future<void> generate(
+    List<BenchmarkResult> results, {
+    List<BenchmarkResult>? history,
+  }) async {
     // Do nothing.
   }
 }
