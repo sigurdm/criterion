@@ -8,6 +8,7 @@ pubspec.lock
 
 # Benchmark reports
 benchmark/report/
+benchmark/screenshots_report/
 benchmark/criterion_history.json
 
 

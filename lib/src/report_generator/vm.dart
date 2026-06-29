@@ -305,6 +305,7 @@ final class ReportGenerator {
                         <div class="chart-container">
                             <canvas id="ffiChart"></canvas>
                         </div>
+                    </div>
                     <div class="card" id="history-trend-card" style="display:none;">
                         <h3>Performance Over Time (Commits)</h3>
                         <div class="chart-container">
@@ -740,6 +741,8 @@ final class ReportGenerator {
         const benchParam = urlParams.get('bench');
         const compareParam = urlParams.get('compare');
         const historyParam = urlParams.get('history');
+        const variantsParam = urlParams.get('variants');
+        const parametersParam = urlParams.get('parameters');
         const selectParam = urlParams.get('select');
 
         if (historyParam === 'true') {
@@ -749,6 +752,20 @@ final class ReportGenerator {
             document.getElementById('history-view').style.display = 'block';
             generateHistoryCharts();
             historyChartsGenerated = true;
+        } else if (variantsParam === 'true') {
+            variantsModeCheckbox.checked = true;
+            variantsMode = true;
+            document.getElementById('single-view').style.display = 'none';
+            document.getElementById('variants-view').style.display = 'block';
+            generateVariantCharts();
+            variantChartsGenerated = true;
+        } else if (parametersParam === 'true') {
+            parametersModeCheckbox.checked = true;
+            parametersMode = true;
+            document.getElementById('single-view').style.display = 'none';
+            document.getElementById('parameters-view').style.display = 'block';
+            generateParameterCharts();
+            parameterChartsGenerated = true;
         } else if (compareParam === 'true') {
             compareModeCheckbox.checked = true;
             compareMode = true;

@@ -273,6 +273,26 @@ If your benchmarks are slow, running them twice in CI might be too expensive. Yo
     2. Run the benchmark on `main` (generates a fresh history containing only the new baseline).
     3. Commit the updated file.
 
+#### Historical Performance Trend Charts & CLI Tool
+
+Criterion automatically captures Git commit metadata (commit hash, message, timestamp) whenever benchmarks run. You can visualize performance timelines across commits in two ways:
+
+##### 1. Interactive HTML Report
+When history tracking is enabled (`exportHistory: true` or `checkRegressions: true`), the HTML report provides timeline visualizations:
+*   **Global History View**: Enable **History View** in the sidebar (or load the report with `?history=true`) to view interactive performance trend line charts across commits for all benchmarks in your suite.
+*   **Single Benchmark Detail**: When viewing an individual benchmark on the main dashboard, a **Performance Over Time (Commits)** line chart automatically displays its execution history.
+
+##### 2. CLI Trend Tool (`criterion:graph`)
+You can generate Markdown trend tables and standalone historical HTML reports directly from the CLI:
+
+```bash
+dart run criterion:graph --history benchmark/criterion_history.json --output benchmark/report
+```
+
+Options:
+*   `-h, --history`: Path to the historical JSON file (defaults to `benchmark/criterion_history.json`).
+*   `-o, --output`: Output directory for the generated HTML report (defaults to `benchmark/report`).
+
 ### Programmatic Regression Testing
 
 You can write standard Dart tests that fail if a performance regression is detected, comparing a newly generated results file against a checked-in "golden" file.
