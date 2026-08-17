@@ -13,40 +13,42 @@
 // limitations under the License.
 
 import 'dart:ffi';
+import '../batch_size.dart';
 import 'compiler.dart';
 
 typedef GetCyclesFunc = Uint64 Function();
 typedef GetCycles = int Function();
 
-/// Provides access to hardware cycle counter.
+/// Native CPU cycle counter for x86_64 and ARM64.
 final class CycleCounter {
+  static DynamicLibrary? _dylib;
   static GetCycles? _getCycles;
-  static bool _initialized = false;
   static bool _supported = false;
+  static bool _initialized = false;
 
-  /// Initializes the cycle counter by compiling and loading the helper.
+  /// Initializes the CPU cycle counter if native compiler toolchains exist.
   static Future<void> init() async {
     if (_initialized) return;
     _initialized = true;
-    try {
-      final libPath = await CycleCounterCompiler.compile();
-      if (libPath == null) return;
 
-      final dylib = DynamicLibrary.open(libPath);
-      _getCycles = dylib
-          .lookup<NativeFunction<GetCyclesFunc>>('get_cycles')
-          .asFunction<GetCycles>();
-
-      if (_getCycles != null && _getCycles!() != 0) {
-        _supported = true;
+    final libPath = await CycleCounterCompiler.compile();
+    if (libPath != null) {
+      try {
+        _dylib = DynamicLibrary.open(libPath);
+        _getCycles = _dylib!
+            .lookup<NativeFunction<GetCyclesFunc>>('get_cycles')
+            .asFunction<GetCycles>();
+        // Test read
+        final c = read();
+        _supported = c > 0;
+      } catch (_) {
+        _supported = false;
       }
-    } catch (e) {
-      // Fail silently
     }
   }
 
-  /// Whether cycle counting is supported on this platform.
-  static bool get isSupported => _supported;
+  /// Whether the CPU cycle counter is supported on this machine.
+  static bool get isSupported => _supported && _getCycles != null;
 
   /// Reads the current value of the cycle counter.
   ///
@@ -61,38 +63,50 @@ final class CycleCounter {
     required Function fn,
     required int iterations,
     Function? setup,
+    BatchSize? batchSize,
   }) async {
     if (!_supported || _getCycles == null) return null;
 
-    final states = <dynamic>[];
-    if (setup != null) {
-      for (var i = 0; i < iterations; i++) {
-        final state = setup();
-        states.add(state is Future ? await state : state);
+    final mode =
+        batchSize ??
+        (setup != null ? BatchSize.smallInput : BatchSize.unbatched);
+    double totalDiff = 0.0;
+    var remaining = iterations;
+
+    while (remaining > 0) {
+      final batch = mode.batchSizeFor(remaining);
+      final states = <dynamic>[];
+      if (setup != null) {
+        for (var i = 0; i < batch; i++) {
+          final state = setup();
+          states.add(state is Future ? await state : state);
+        }
       }
+
+      final start = _getCycles!();
+      if (setup != null) {
+        for (var i = 0; i < batch; i++) {
+          final r = fn(states[i]);
+          if (r is Future) await r;
+        }
+      } else {
+        for (var i = 0; i < batch; i++) {
+          final r = fn();
+          if (r is Future) await r;
+        }
+      }
+      final end = _getCycles!();
+
+      final diff = end - start;
+      // Handle rare negative diff due to signed representation if it wrapped.
+      final actualDiff = diff < 0
+          ? (BigInt.from(end) - BigInt.from(start)).toUnsigned(64).toDouble()
+          : diff.toDouble();
+
+      totalDiff += actualDiff;
+      remaining -= batch;
     }
 
-    final start = _getCycles!();
-    if (setup != null) {
-      for (var i = 0; i < iterations; i++) {
-        final r = fn(states[i]);
-        if (r is Future) await r;
-      }
-    } else {
-      for (var i = 0; i < iterations; i++) {
-        final r = fn();
-        if (r is Future) await r;
-      }
-    }
-    final end = _getCycles!();
-
-    final diff = end - start;
-    // Handle rare negative diff due to signed representation if it wrapped.
-    // (Though 64-bit wrap is extremely rare).
-    final actualDiff = diff < 0
-        ? (BigInt.from(end) - BigInt.from(start)).toUnsigned(64).toDouble()
-        : diff.toDouble();
-
-    return actualDiff / iterations;
+    return totalDiff / iterations;
   }
 }

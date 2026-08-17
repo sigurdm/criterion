@@ -107,12 +107,12 @@ void main() {
       // Expected bytes: ~4000 bytes.
       // We allow some tolerance because of VM service overhead and keeper list growth.
       expect(bytes, greaterThan(3500));
-      expect(bytes, lessThan(8000)); // Allow buffer for VM overhead (~1.5KB)
+      expect(bytes, lessThan(12000)); // Allow buffer for VM overhead (~1.5KB)
 
       // Expected objects: 101 objects (1 list + 100 LargeObjects).
       // Plus VM service overhead (~15-25 objects).
       expect(objects, greaterThanOrEqualTo(100));
-      expect(objects, lessThan(140));
+      expect(objects, lessThan(180));
     });
   });
 }

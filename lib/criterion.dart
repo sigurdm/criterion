@@ -22,5 +22,6 @@ export 'src/result.dart';
 export 'src/blackhole.dart';
 export 'src/statistics.dart'
     show Sample, ConfidenceInterval, BootstrapResult, OutlierAnalysis;
+export 'src/batch_size.dart';
 export "src/comparison.dart";
 export "src/report_generator.dart";

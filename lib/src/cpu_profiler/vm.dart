@@ -18,6 +18,7 @@ import 'dart:io';
 import 'dart:isolate' as dart_isolate;
 import 'package:vm_service/vm_service.dart';
 import 'package:vm_service/vm_service_io.dart';
+import '../batch_size.dart';
 import '../result.dart';
 
 /// Helper to collect CPU profiles using the VM Service.
@@ -28,6 +29,7 @@ final class CpuProfiler {
     required int iterations,
     Function? setup,
     String? exportPath,
+    BatchSize? batchSize,
   }) async {
     VmService? service;
     try {
@@ -54,24 +56,31 @@ final class CpuProfiler {
         // Ignore
       }
 
-      final states = <dynamic>[];
-      if (setup != null) {
-        for (var i = 0; i < iterations; i++) {
-          final state = setup();
-          states.add(state is Future ? await state : state);
-        }
-      }
-
+      final mode =
+          batchSize ??
+          (setup != null ? BatchSize.smallInput : BatchSize.unbatched);
       final startTime = (await service.getVMTimelineMicros()).timestamp!;
 
-      for (var i = 0; i < iterations; i++) {
+      var remaining = iterations;
+      while (remaining > 0) {
+        final batch = mode.batchSizeFor(remaining);
+        final states = <dynamic>[];
         if (setup != null) {
-          final r = fn(states[i]);
-          if (r is Future) await r;
-        } else {
-          final r = fn();
-          if (r is Future) await r;
+          for (var i = 0; i < batch; i++) {
+            final state = setup();
+            states.add(state is Future ? await state : state);
+          }
         }
+        for (var i = 0; i < batch; i++) {
+          if (setup != null) {
+            final r = fn(states[i]);
+            if (r is Future) await r;
+          } else {
+            final r = fn();
+            if (r is Future) await r;
+          }
+        }
+        remaining -= batch;
       }
 
       final endTime = (await service.getVMTimelineMicros()).timestamp!;

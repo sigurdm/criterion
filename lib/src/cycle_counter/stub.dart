@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+import '../batch_size.dart';
+
 /// Stub implementation of CycleCounter when VM/FFI is not available.
 final class CycleCounter {
   /// No-op.
@@ -28,5 +30,6 @@ final class CycleCounter {
     required Function fn,
     required int iterations,
     Function? setup,
+    BatchSize? batchSize,
   }) async => null;
 }

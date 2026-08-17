@@ -1,4 +1,5 @@
 import 'dart:async';
+import '../batch_size.dart';
 import '../result.dart';
 
 final class InstructionMeasurer {
@@ -8,6 +9,7 @@ final class InstructionMeasurer {
     required Function fn,
     required int iterations,
     Function? setup,
+    BatchSize? batchSize,
   }) async {
     return null;
   }

@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+import '../batch_size.dart';
 import '../result.dart';
 
 /// Stub implementation of CpuProfiler when VM/IO is not available.
@@ -22,6 +23,7 @@ final class CpuProfiler {
     required int iterations,
     Function? setup,
     String? exportPath,
+    BatchSize? batchSize,
   }) async {
     return null;
   }

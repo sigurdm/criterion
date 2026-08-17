@@ -16,6 +16,7 @@ import 'dart:async';
 import 'dart:ffi';
 import 'dart:io';
 import 'package:ffi/ffi.dart';
+import '../batch_size.dart';
 import '../result.dart';
 
 // Linux x86_64 syscall number for perf_event_open
@@ -129,6 +130,7 @@ final class InstructionMeasurer {
     required Function fn,
     required int iterations,
     Function? setup,
+    BatchSize? batchSize,
   }) async {
     if (!isSupported) return null;
 
@@ -159,35 +161,45 @@ final class InstructionMeasurer {
     }
 
     try {
-      final states = <dynamic>[];
-      if (setup != null) {
-        for (var i = 0; i < iterations; i++) {
-          final state = setup();
-          states.add(state is Future ? await state : state);
-        }
-      }
-
-      // Reset and Enable the counter
+      final mode =
+          batchSize ??
+          (setup != null ? BatchSize.smallInput : BatchSize.unbatched);
       ioctlFn(fd, _perfEventIocReset, 0);
-      ioctlFn(fd, _perfEventIocEnable, 0);
 
-      // Run workload
-      for (var i = 0; i < iterations; i++) {
+      var remaining = iterations;
+      while (remaining > 0) {
+        final batch = mode.batchSizeFor(remaining);
+        final states = <dynamic>[];
         if (setup != null) {
-          final r = fn(states[i]);
-          if (r is Future) {
-            await r;
-          }
-        } else {
-          final r = fn();
-          if (r is Future) {
-            await r;
+          for (var i = 0; i < batch; i++) {
+            final state = setup();
+            states.add(state is Future ? await state : state);
           }
         }
-      }
 
-      // Disable
-      ioctlFn(fd, _perfEventIocDisable, 0);
+        // Enable counter during function execution
+        ioctlFn(fd, _perfEventIocEnable, 0);
+
+        // Run workload
+        for (var i = 0; i < batch; i++) {
+          if (setup != null) {
+            final r = fn(states[i]);
+            if (r is Future) {
+              await r;
+            }
+          } else {
+            final r = fn();
+            if (r is Future) {
+              await r;
+            }
+          }
+        }
+
+        // Disable counter while preparing next batch
+        ioctlFn(fd, _perfEventIocDisable, 0);
+
+        remaining -= batch;
+      }
 
       // Read counter
       final counterBuf = calloc<Uint64>();

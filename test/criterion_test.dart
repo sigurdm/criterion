@@ -100,5 +100,103 @@ void main() {
       expect(timeLine, contains('Overhead (FFI bridge):'));
       expect(timeLine, contains('Net logic:'));
     });
+
+    group('Batched Setups and BatchSize', () {
+      test('default batchSize is smallInput when setup is provided', () {
+        final c = Criterion();
+        c.bench<int>('with setup', (val) => val + 1, setup: () => 42);
+        expect(c.benchmarks.first.batchSize, equals(BatchSize.smallInput));
+      });
+
+      test('default batchSize is unbatched when setup is omitted', () {
+        final c = Criterion();
+        c.bench('no setup', () => 1 + 1);
+        expect(c.benchmarks.first.batchSize, equals(BatchSize.unbatched));
+      });
+
+      test('throws ArgumentError if batchSize is passed without setup', () {
+        final c = Criterion();
+        expect(
+          () => c.bench(
+            'invalid batchSize',
+            () {},
+            batchSize: BatchSize.smallInput,
+          ),
+          throwsA(isA<ArgumentError>()),
+        );
+        expect(
+          () => c.variants('invalid variants batchSize', {
+            'v1': () {},
+          }, batchSize: BatchSize.largeInput),
+          throwsA(isA<ArgumentError>()),
+        );
+        expect(
+          () => c.benchWith<dynamic, int>(
+            'invalid benchWith batchSize',
+            [1, 2],
+            (val) {},
+            batchSize: BatchSize.numIterations(10),
+          ),
+          throwsA(isA<ArgumentError>()),
+        );
+      });
+
+      test(
+        'BatchSize.numIterations throws ArgumentError on non-positive n',
+        () {
+          expect(
+            () => BatchSize.numIterations(0),
+            throwsA(isA<ArgumentError>()),
+          );
+          expect(
+            () => BatchSize.numIterations(-5),
+            throwsA(isA<ArgumentError>()),
+          );
+        },
+      );
+
+      test('batchSizeFor calculates batch sizes accurately', () {
+        expect(BatchSize.smallInput.batchSizeFor(2500), equals(1000));
+        expect(BatchSize.smallInput.batchSizeFor(250), equals(250));
+        expect(BatchSize.smallInput.batchSizeFor(50), equals(50));
+        expect(BatchSize.largeInput.batchSizeFor(10), equals(1));
+        expect(BatchSize.unbatched.batchSizeFor(1234), equals(1234));
+        final custom = BatchSize.numIterations(25);
+        expect(custom.batchSizeFor(60), equals(25));
+        expect(custom.batchSizeFor(15), equals(15));
+      });
+
+      test('executes batched setup benchmark cleanly', () async {
+        var setupCount = 0;
+        var runCount = 0;
+        final c = Criterion(
+          config: const CriterionConfig(
+            useKbssd: false,
+            generateHtmlReport: false,
+            exportJson: false,
+          ),
+        );
+
+        c.bench<List<int>>(
+          'batched sort',
+          (list) {
+            runCount++;
+            list.sort();
+          },
+          setup: () {
+            setupCount++;
+            return [3, 1, 2];
+          },
+          batchSize: BatchSize.numIterations(100),
+          samples: 5,
+          warmupDuration: const Duration(milliseconds: 2),
+        );
+
+        final results = await c.run();
+        expect(results, hasLength(1));
+        expect(setupCount, equals(runCount));
+        expect(runCount, greaterThan(10));
+      });
+    });
   });
 }

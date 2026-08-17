@@ -23,6 +23,7 @@ import 'kbssd_math.dart';
 import 'result.dart';
 import 'report_generator.dart';
 import 'blackhole.dart';
+import 'batch_size.dart';
 import 'throughput.dart';
 import 'history.dart';
 import 'cpu_profiler.dart';
@@ -94,6 +95,7 @@ final class Criterion {
     Function? noOp,
     Throughput? throughput,
     FutureOr<T> Function()? setup,
+    BatchSize? batchSize,
   }) {
     if (setup != null) {
       if (fn is Function()) {
@@ -117,6 +119,11 @@ final class Criterion {
           'noOp must not accept any parameters when setup is not provided',
         );
       }
+      if (batchSize != null) {
+        throw ArgumentError(
+          'batchSize can only be provided when setup is provided',
+        );
+      }
     }
 
     final fullName = _groupPath.isEmpty
@@ -132,6 +139,7 @@ final class Criterion {
         noOp: noOp,
         throughput: throughput,
         setup: setup,
+        batchSize: batchSize,
       ),
     );
   }
@@ -168,6 +176,7 @@ final class Criterion {
     Duration warmupDuration = const Duration(seconds: 1),
     Throughput? throughput,
     FutureOr<T> Function()? setup,
+    BatchSize? batchSize,
   }) {
     variants.forEach((variantName, fn) {
       if (setup != null) {
@@ -184,6 +193,12 @@ final class Criterion {
         }
       }
     });
+
+    if (setup == null && batchSize != null) {
+      throw ArgumentError(
+        'batchSize can only be provided when setup is provided',
+      );
+    }
 
     final baseName = _groupPath.isEmpty
         ? groupName
@@ -202,6 +217,7 @@ final class Criterion {
           variantName: variantName,
           throughput: throughput,
           setup: setup,
+          batchSize: batchSize,
         ),
       );
     });
@@ -230,7 +246,14 @@ final class Criterion {
     Function? noOp,
     Throughput Function(P param)? throughput,
     FutureOr<T> Function(P param)? setup,
+    BatchSize? batchSize,
   }) {
+    if (setup == null && batchSize != null) {
+      throw ArgumentError(
+        'batchSize can only be provided when setup is provided',
+      );
+    }
+
     for (final p in parameters) {
       final String fullName = _groupPath.isEmpty
           ? '$groupName / $p'
@@ -315,6 +338,7 @@ final class Criterion {
           noOp: wrappedNoOp,
           throughput: tp,
           setup: wrappedSetup,
+          batchSize: batchSize,
           parameterGroup: groupName,
           parameterValue: p,
         ),
@@ -454,6 +478,9 @@ final class Benchmark<T> {
   /// The setup function, if any.
   final FutureOr<T> Function()? setup;
 
+  /// The batch size configuration.
+  final BatchSize batchSize;
+
   /// The number of samples to collect.
   final int samples;
 
@@ -489,7 +516,16 @@ final class Benchmark<T> {
     this.parameterValue,
     this.throughput,
     this.setup,
-  });
+    BatchSize? batchSize,
+  }) : batchSize =
+           batchSize ??
+           (setup != null ? BatchSize.smallInput : BatchSize.unbatched) {
+    if (setup == null && batchSize != null) {
+      throw ArgumentError(
+        'batchSize can only be provided when setup is provided',
+      );
+    }
+  }
 
   /// Executes the warm-up, calibration, sampling, statistical analysis,
   /// and outputs the report.
@@ -663,11 +699,14 @@ final class Benchmark<T> {
     final outlierAnalysis = sample.analyzeOutliers();
 
     // Memory Measurement
-    final memoryIterations = iterations > 100 ? iterations : 100;
+    final memoryIterations = setup != null
+        ? iterations.clamp(1, 1000)
+        : (iterations > 100 ? iterations : 100);
     final memoryResult = await MemoryMeasurer.measure(
       fn: targetFn,
       iterations: memoryIterations,
       setup: setup,
+      batchSize: batchSize,
     );
 
     // Instruction Measurement
@@ -675,6 +714,7 @@ final class Benchmark<T> {
       fn: targetFn,
       iterations: memoryIterations,
       setup: setup,
+      batchSize: batchSize,
     );
 
     // CPU Profiling
@@ -696,6 +736,7 @@ final class Benchmark<T> {
         iterations: profileIterations,
         setup: setup,
         exportPath: exportPath,
+        batchSize: batchSize,
       );
     }
 
@@ -704,6 +745,7 @@ final class Benchmark<T> {
       fn: targetFn,
       iterations: memoryIterations,
       setup: setup,
+      batchSize: batchSize,
     );
 
     return _MeasurementRun(
@@ -741,10 +783,15 @@ final class Benchmark<T> {
 
   Future<int> _calibrate(Function targetFn) async {
     var iterations = 1;
-    const targetNs = 10 * 1000 * 1000; // 10ms
+    final targetNs = setup != null ? 2 * 1000 * 1000 : 10 * 1000 * 1000;
+    final maxWallNs = setup != null ? 3 * 1000 * 1000 : 25 * 1000 * 1000;
     while (true) {
+      final wallStopwatch = Stopwatch()..start();
       final ns = await _measureIterations(targetFn, iterations);
-      if (ns >= targetNs) {
+      wallStopwatch.stop();
+      final wallNs =
+          (wallStopwatch.elapsedTicks * 1000000000.0) / wallStopwatch.frequency;
+      if (ns >= targetNs || wallNs >= maxWallNs) {
         break;
       }
       iterations *= 10;
@@ -758,19 +805,24 @@ final class Benchmark<T> {
   Future<double> _measureIterations(Function targetFn, int count) async {
     final stopwatch = Stopwatch();
     if (setup != null) {
-      final states = <T>[];
-      for (var i = 0; i < count; i++) {
-        final state = setup!();
-        states.add(state is Future ? await state : state);
-      }
-      stopwatch.start();
-      for (var i = 0; i < count; i++) {
-        final r = targetFn(states[i]);
-        if (r is Future) {
-          await r;
+      var remaining = count;
+      while (remaining > 0) {
+        final batch = batchSize.batchSizeFor(remaining);
+        final states = <T>[];
+        for (var i = 0; i < batch; i++) {
+          final state = setup!();
+          states.add(state is Future ? await state : state);
         }
+        stopwatch.start();
+        for (var i = 0; i < batch; i++) {
+          final r = targetFn(states[i]);
+          if (r is Future) {
+            await r;
+          }
+        }
+        stopwatch.stop();
+        remaining -= batch;
       }
-      stopwatch.stop();
     } else {
       stopwatch.start();
       for (var i = 0; i < count; i++) {
