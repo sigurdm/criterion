@@ -30,6 +30,13 @@ void main() {
       expect(() => blackhole(null), returnsNormally);
     });
 
+    test('static sink setter and preventDCE work cleanly', () {
+      expect(() => Blackhole.sink = 123, returnsNormally);
+      expect(() => Blackhole.sink = 'hello', returnsNormally);
+      expect(() => Blackhole.sink = null, returnsNormally);
+      expect(() => Blackhole.preventDCE(), returnsNormally);
+    });
+
     test('harness integration works', () async {
       final c = Criterion();
       c.bench(

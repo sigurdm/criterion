@@ -198,5 +198,88 @@ void main() {
         expect(runCount, greaterThan(10));
       });
     });
+
+    group('Function signature and setup validation', () {
+      test('bench throws ArgumentError on signature mismatch', () {
+        final c = Criterion();
+        // setup provided, but fn takes 0 args
+        expect(
+          () => c.bench('test', () {}, setup: () => 42),
+          throwsArgumentError,
+        );
+        // setup provided, but noOp takes 0 args
+        expect(
+          () => c.bench('test', (x) {}, setup: () => 42, noOp: () {}),
+          throwsArgumentError,
+        );
+        // setup omitted, but fn takes 1 arg
+        expect(() => c.bench('test', (x) {}), throwsArgumentError);
+        // setup omitted, but noOp takes 1 arg
+        expect(() => c.bench('test', () {}, noOp: (x) {}), throwsArgumentError);
+      });
+
+      test('variants throws ArgumentError on signature mismatch', () {
+        final c = Criterion();
+        // setup provided, but variant takes 0 args
+        expect(
+          () => c.variants('v', {'v1': () {}}, setup: () => 42),
+          throwsArgumentError,
+        );
+        // setup omitted, but variant takes 1 arg
+        expect(() => c.variants('v', {'v1': (x) {}}), throwsArgumentError);
+      });
+
+      test(
+        'Benchmark constructor throws when batchSize passed without setup',
+        () {
+          expect(
+            () => Benchmark('invalid', () {}, batchSize: BatchSize.smallInput),
+            throwsArgumentError,
+          );
+        },
+      );
+    });
+
+    group('Formatters and utilities', () {
+      test('Benchmark.formatDuration formats all scales correctly', () {
+        expect(Benchmark.formatDuration(0.5), contains('ps'));
+        expect(Benchmark.formatDuration(500.0), contains('ns'));
+        expect(Benchmark.formatDuration(50000.0), contains('μs'));
+        expect(Benchmark.formatDuration(5000000.0), contains('ms'));
+        expect(Benchmark.formatDuration(5000000000.0), contains('s'));
+      });
+
+      test('Benchmark.bold wraps in ANSI bold escape codes', () {
+        expect(Benchmark.bold('test'), equals('\x1B[1mtest\x1B[22m'));
+      });
+
+      test('throughput rate formatting in benchmark run', () async {
+        final c = Criterion(
+          config: const CriterionConfig(
+            generateHtmlReport: false,
+            exportJson: false,
+            useKbssd: false,
+          ),
+        );
+        final prints = <String>[];
+        c.bench(
+          'bytes bench',
+          () {},
+          throughput: Throughput.bytes(500),
+          samples: 5,
+          warmupDuration: Duration.zero,
+        );
+        final results = await runZoned(
+          () => c.run(),
+          zoneSpecification: ZoneSpecification(
+            print: (self, parent, zone, line) => prints.add(line),
+          ),
+        );
+        expect(results, hasLength(1));
+        expect(results.first.throughput, isNotNull);
+        expect(prints.any((l) => l.contains('throughput:')), isTrue);
+        expect(prints.any((l) => l.contains('/s')), isTrue);
+      });
+    });
   });
 }

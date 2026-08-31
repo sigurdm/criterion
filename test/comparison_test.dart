@@ -26,6 +26,7 @@ void main() {
       double? allocatedBytes,
       double? allocatedObjects,
       double? instructions,
+      double? cycles,
       String platform = '',
     }) {
       return BenchmarkResult(
@@ -62,6 +63,7 @@ void main() {
           instructions: instructions != null
               ? InstructionResult(instructionsPerIteration: instructions)
               : null,
+          cyclesPerIteration: cycles,
         ),
       );
     }
@@ -282,6 +284,150 @@ void main() {
       expect(table, contains("500"));
       expect(table, contains("600"));
       expect(table, contains("+100 (+20.00%)"));
+    });
+
+    test(
+      "Markdown table formatting with added, removed, cycles metrics, and unit formatting",
+      () {
+        final before = [
+          createMockResult(
+            name: "bench1",
+            mean: 1500.0, // 1.50 μs
+            lowerBound: 1400.0,
+            upperBound: 1600.0,
+            allocatedBytes: 15.0 * 1024 * 1024, // 15.0 MB
+            allocatedObjects: 1500000.0, // 1,500,000
+            cycles: 250000.0,
+          ),
+          createMockResult(
+            name: "removed_bench",
+            mean: 2500000.0, // 2.50 ms
+            lowerBound: 2400000.0,
+            upperBound: 2600000.0,
+          ),
+        ];
+        final after = [
+          createMockResult(
+            name: "bench1",
+            mean: 3500000000.0, // 3.50 s
+            lowerBound: 3400000000.0,
+            upperBound: 3600000000.0,
+            allocatedBytes: 5.0 * 1024 * 1024, // -10.0 MB
+            allocatedObjects: 500000.0,
+            cycles: 200000.0,
+          ),
+          createMockResult(
+            name: "added_bench",
+            mean: 100.0,
+            lowerBound: 90.0,
+            upperBound: 110.0,
+          ),
+        ];
+
+        final comparison = compareResults(before, after);
+        expect(comparison.removed, contains("removed_bench"));
+        expect(comparison.added, contains("added_bench"));
+
+        final table = comparison.toMarkdownTable();
+        expect(table, contains("Cycles (before)"));
+        expect(table, contains("Cycles (after)"));
+        expect(table, contains("### Removed Benchmarks"));
+        expect(table, contains("- removed_bench"));
+        expect(table, contains("### Added Benchmarks"));
+        expect(table, contains("- added_bench"));
+        expect(table, contains("1.50 μs"));
+        expect(table, contains("3.50 s"));
+        expect(table, contains("15.0 MB"));
+        expect(table, contains("1,500,000"));
+        expect(table, contains("-50,000 (-20.00%)"));
+      },
+    );
+
+    test("Markdown table formatting with platform and parameter columns", () {
+      final r1 = BenchmarkResult(
+        name: "fib",
+        iterations: 100,
+        platform: "jit",
+        parameterValue: 10,
+        primary: MeasurementResult(
+          sampleTimes: [10000000.0], // 10.00 ms
+          mean: 10000000.0,
+          median: 10000000.0,
+          stdDev: 0.0,
+          meanCI: ConfidenceInterval(
+            lowerBound: 9000000.0,
+            upperBound: 11000000.0,
+          ),
+          medianCI: ConfidenceInterval(
+            lowerBound: 9000000.0,
+            upperBound: 11000000.0,
+          ),
+          outliers: OutlierAnalysis(
+            lowSevere: 0,
+            lowMild: 0,
+            highMild: 0,
+            highSevere: 0,
+            outlierVariancePercentage: 0.0,
+          ),
+        ),
+      );
+      final r2 = BenchmarkResult(
+        name: "fib",
+        iterations: 100,
+        platform: "jit",
+        parameterValue: 10,
+        primary: MeasurementResult(
+          sampleTimes: [12000000.0], // 12.00 ms
+          mean: 12000000.0,
+          median: 12000000.0,
+          stdDev: 0.0,
+          meanCI: ConfidenceInterval(
+            lowerBound: 11000000.0,
+            upperBound: 13000000.0,
+          ),
+          medianCI: ConfidenceInterval(
+            lowerBound: 11000000.0,
+            upperBound: 13000000.0,
+          ),
+          outliers: OutlierAnalysis(
+            lowSevere: 0,
+            lowMild: 0,
+            highMild: 0,
+            highSevere: 0,
+            outlierVariancePercentage: 0.0,
+          ),
+        ),
+      );
+
+      final comparison = compareResults([r1], [r2]);
+      final table = comparison.toMarkdownTable();
+      expect(table, contains("Platform"));
+      expect(table, contains("Parameter"));
+      expect(table, contains("jit"));
+      expect(table, contains("10"));
+      expect(table, contains("10.00 ms"));
+      expect(table, contains("12.00 ms"));
+    });
+
+    test("loadResults and formatResults serialization helpers", () {
+      expect(() => loadResults('{"not": "a list"}'), throwsFormatException);
+      expect(
+        () => loadResults('["string instead of map"]'),
+        throwsFormatException,
+      );
+
+      final r = createMockResult(
+        name: "bench",
+        mean: 100.0,
+        lowerBound: 90.0,
+        upperBound: 110.0,
+      );
+      final formatted = formatResults([r]);
+      expect(formatted, contains('"name": "bench"'));
+
+      final loaded = loadResults(formatted);
+      expect(loaded, hasLength(1));
+      expect(loaded.first.name, equals("bench"));
     });
   });
 }

@@ -260,6 +260,23 @@ void main() {
       expect(htmlContent, contains('parameterGroups'));
       expect(htmlContent, contains('generateParameterCharts'));
     });
+
+    test('creates reportDir recursively when it does not exist', () async {
+      final nonExistentDir = '${tempDir.path}/deep/nested/report';
+      final config = CriterionConfig(
+        reportDir: nonExistentDir,
+        generateHtmlReport: false,
+        exportJson: true,
+        useKbssd: false,
+      );
+
+      await criterion('Non-existent Dir Suite', (c) {
+        c.bench('b', () {}, samples: 5, warmupDuration: Duration.zero);
+      }, config: config);
+
+      expect(Directory(nonExistentDir).existsSync(), isTrue);
+      expect(File('$nonExistentDir/results.json').existsSync(), isTrue);
+    });
   });
 }
 

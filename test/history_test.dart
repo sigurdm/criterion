@@ -15,6 +15,7 @@
 import 'dart:async';
 import 'dart:io';
 import 'package:criterion/criterion.dart';
+import 'package:criterion/src/history.dart';
 import 'package:test/test.dart';
 
 void main() {
@@ -136,5 +137,96 @@ void main() {
       expect(deserialized.shortHash, commit.shortHash);
       expect(deserialized.message, commit.message);
     });
+
+    test('HistoryManager gracefully handles corrupted/invalid JSON', () async {
+      final file = File(historyFilePath);
+      file.writeAsStringSync('invalid json content');
+      final manager = HistoryManager(historyFilePath);
+      final list = await manager.load();
+      expect(list, isEmpty);
+    });
+
+    test(
+      'checkRegressions uses latest timestamp when duplicates exist and handles empty history',
+      () {
+        final now = DateTime.now();
+        final older = BenchmarkResult(
+          name: 'bench',
+          iterations: 100,
+          platform: 'jit',
+          timestamp: now.subtract(const Duration(hours: 1)),
+          primary: MeasurementResult(
+            sampleTimes: [10.0],
+            mean: 10.0,
+            median: 10.0,
+            stdDev: 0.0,
+            meanCI: ConfidenceInterval(lowerBound: 9.0, upperBound: 11.0),
+            medianCI: ConfidenceInterval(lowerBound: 9.0, upperBound: 11.0),
+            outliers: OutlierAnalysis(
+              lowSevere: 0,
+              lowMild: 0,
+              highMild: 0,
+              highSevere: 0,
+              outlierVariancePercentage: 0.0,
+            ),
+          ),
+        );
+        final newer = BenchmarkResult(
+          name: 'bench',
+          iterations: 100,
+          platform: 'jit',
+          timestamp: now,
+          primary: MeasurementResult(
+            sampleTimes: [20.0],
+            mean: 20.0,
+            median: 20.0,
+            stdDev: 0.0,
+            meanCI: ConfidenceInterval(lowerBound: 19.0, upperBound: 21.0),
+            medianCI: ConfidenceInterval(lowerBound: 19.0, upperBound: 21.0),
+            outliers: OutlierAnalysis(
+              lowSevere: 0,
+              lowMild: 0,
+              highMild: 0,
+              highSevere: 0,
+              outlierVariancePercentage: 0.0,
+            ),
+          ),
+        );
+        final printsDedup = <String>[];
+        runZoned(
+          () => checkRegressions(current: [newer], history: [older, newer]),
+          zoneSpecification: ZoneSpecification(
+            print: (self, parent, zone, line) => printsDedup.add(line),
+          ),
+        );
+        expect(
+          printsDedup.any((l) => l.contains('WARNING: Regression detected')),
+          isFalse,
+        );
+
+        final printsRegressed = <String>[];
+        runZoned(
+          () => checkRegressions(current: [newer], history: [older]),
+          zoneSpecification: ZoneSpecification(
+            print: (self, parent, zone, line) => printsRegressed.add(line),
+          ),
+        );
+        expect(
+          printsRegressed.any(
+            (l) => l.contains('WARNING: Regression detected in bench'),
+          ),
+          isTrue,
+        );
+
+        final printsEmpty = <String>[];
+        runZoned(
+          () => checkRegressions(current: [newer], history: []),
+          zoneSpecification: ZoneSpecification(
+            print: (self, parent, zone, line) => printsEmpty.add(line),
+          ),
+        );
+        expect(printsEmpty, isEmpty);
+      },
+    );
   });
 }

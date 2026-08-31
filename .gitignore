@@ -11,4 +11,8 @@ benchmark/report/
 benchmark/screenshots_report/
 benchmark/criterion_history.json
 
+# Test coverage
+coverage/
 
+# Jetski metadata
+.jetski/

@@ -158,6 +158,23 @@ void main() {
       expect(analysis4.highSevere, equals(0));
     });
 
+    test('outlier detection identifies lowSevere and highSevere', () {
+      final sample = Sample([
+        1.0,
+        5.0,
+        9.0,
+        10.0,
+        10.0,
+        10.0,
+        11.0,
+        15.0,
+        20.0,
+      ]);
+      final analysis = sample.analyzeOutliers();
+      expect(analysis.lowSevere, greaterThanOrEqualTo(1));
+      expect(analysis.highSevere, greaterThanOrEqualTo(1));
+    });
+
     test('bootstrapping runs and produces plausible confidence intervals', () {
       // Use a fixed random generator
       final random = math.Random(12345);
@@ -174,6 +191,66 @@ void main() {
       // Median is 49.5
       expect(result.medianConfidenceInterval.lowerBound, lessThan(52.0));
       expect(result.medianConfidenceInterval.upperBound, greaterThan(47.0));
+    });
+
+    test('quantile error handling and edge cases', () {
+      final sample = Sample([1.0, 2.0, 3.0]);
+      expect(() => sample.quantile(-0.1), throwsArgumentError);
+      expect(() => sample.quantile(1.1), throwsArgumentError);
+
+      final empty = Sample([]);
+      expect(empty.quantile(0.5), equals(0.0));
+
+      final single = Sample([42.0]);
+      expect(single.quantile(0.5), equals(42.0));
+    });
+
+    test('bootstrap error handling and single element sample', () {
+      expect(() => Sample([]).bootstrap(), throwsStateError);
+      expect(
+        () => Sample([1.0, 2.0]).bootstrap(resamples: 0),
+        throwsArgumentError,
+      );
+
+      final single = Sample([42.0]);
+      final res = single.bootstrap(resamples: 10);
+      expect(res.meanConfidenceInterval.lowerBound, equals(42.0));
+      expect(res.meanConfidenceInterval.upperBound, equals(42.0));
+      expect(res.medianConfidenceInterval.lowerBound, equals(42.0));
+      expect(res.medianConfidenceInterval.upperBound, equals(42.0));
+    });
+
+    test('analyzeOutliers handles small samples (< 4 items)', () {
+      final sample = Sample([10.0, 20.0]);
+      final analysis = sample.analyzeOutliers();
+      expect(analysis.totalOutliers, equals(0));
+      expect(analysis.outlierVariancePercentage, equals(0.0));
+    });
+
+    test('ConfidenceInterval serialization and toString', () {
+      final ci = ConfidenceInterval.fromJson({
+        'lowerBound': 1.234,
+        'upperBound': 5.678,
+      });
+      expect(ci.lowerBound, equals(1.234));
+      expect(ci.upperBound, equals(5.678));
+      expect(ci.toString(), equals('[1.23, 5.68]'));
+    });
+
+    test('OutlierAnalysis serialization and totalOutliers', () {
+      final oa = OutlierAnalysis.fromJson({
+        'lowSevere': 1,
+        'lowMild': 2,
+        'highMild': 3,
+        'highSevere': 4,
+        'outlierVariancePercentage': 12.5,
+      });
+      expect(oa.lowSevere, equals(1));
+      expect(oa.lowMild, equals(2));
+      expect(oa.highMild, equals(3));
+      expect(oa.highSevere, equals(4));
+      expect(oa.outlierVariancePercentage, equals(12.5));
+      expect(oa.totalOutliers, equals(10));
     });
   });
 }

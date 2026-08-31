@@ -127,5 +127,5 @@ final class _Unbatched extends BatchSize {
       identical(this, other) || other is _Unbatched;
 
   @override
-  int get hashCode => _label.hashCode;
+  int get hashCode => 0;
 }

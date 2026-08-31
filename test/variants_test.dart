@@ -211,5 +211,34 @@ void main() {
       expect(htmlContent, contains('variants-mode-container'));
       expect(htmlContent, contains('variants-view'));
     });
+
+    test('variants API supports setup callback', () async {
+      final c = Criterion(
+        config: const CriterionConfig(
+          generateHtmlReport: false,
+          exportJson: false,
+          useKbssd: false,
+        ),
+      );
+      var setupCount = 0;
+      c.variants<List<int>>(
+        'sort',
+        {'dart_sort': (list) => list.sort(), 'noop': (list) {}},
+        setup: () {
+          setupCount++;
+          return [3, 2, 1];
+        },
+        samples: 5,
+        warmupDuration: Duration.zero,
+      );
+
+      expect(c.benchmarks.length, equals(2));
+      expect(c.benchmarks[0].setup, isNotNull);
+      expect(c.benchmarks[1].setup, isNotNull);
+
+      final results = await c.run();
+      expect(results, hasLength(2));
+      expect(setupCount, greaterThan(10));
+    });
   });
 }

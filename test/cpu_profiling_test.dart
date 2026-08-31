@@ -16,6 +16,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:criterion/criterion.dart';
+import 'package:criterion/src/cpu_profiler.dart';
 import 'package:test/test.dart';
 import 'package:path/path.dart' as p;
 
@@ -111,4 +112,21 @@ void main() {
       expect(decoded['functions'], isList);
     },
   );
+
+  test('CpuProfiler.collect supports setup callback', () async {
+    var setupCount = 0;
+    final profile = await CpuProfiler.collect(
+      fn: (List<int> list) {
+        list.sort();
+      },
+      iterations: 100,
+      setup: () {
+        setupCount++;
+        return [5, 3, 1, 4, 2];
+      },
+      batchSize: BatchSize.numIterations(20),
+    );
+    expect(profile, isNotNull);
+    expect(setupCount, equals(100));
+  });
 }
