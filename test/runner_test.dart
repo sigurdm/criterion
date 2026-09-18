@@ -12,6 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+@Timeout(Duration(minutes: 3))
+library;
+
 import 'dart:convert';
 import 'dart:io';
 import 'package:test/test.dart';
@@ -60,6 +63,7 @@ void main() async {
       reportDir: '${reportDir.path}',
       generateHtmlReport: true,
       exportJson: true,
+      exportHistory: false,
     ),
   );
 }
@@ -151,6 +155,7 @@ void main() async {
       reportDir: '${reportDir.path}',
       generateHtmlReport: true,
       exportJson: true,
+      exportHistory: false,
     ),
   );
 }
@@ -232,7 +237,7 @@ void main() async {
 
     test('runs benchmark in JS flavor if node is available', () async {
       if (!await _isNodeAvailable()) {
-        print('Skipping JS runner test: node is not available');
+        markTestSkipped('node is not available');
         return;
       }
 
@@ -273,14 +278,14 @@ void main() async {
     (c) {
       c.bench('bench1', () {}, samples: 5, warmupDuration: Duration(milliseconds: 10));
     },
-    config: CriterionConfig(exportJson: false, generateHtmlReport: false),
+    config: CriterionConfig(exportJson: false, generateHtmlReport: false, exportHistory: false),
   );
   await criterion(
     'Suite2',
     (c) {
       c.bench('bench2', () {}, samples: 5, warmupDuration: Duration(milliseconds: 10));
     },
-    config: CriterionConfig(exportJson: false, generateHtmlReport: false),
+    config: CriterionConfig(exportJson: false, generateHtmlReport: false, exportHistory: false),
   );
 }
 ''');
@@ -343,6 +348,7 @@ void main() async {
       reportDir: 'benchmark/report',
       exportJson: true,
       generateHtmlReport: true,
+      exportHistory: false,
     ),
   );
 }
@@ -390,7 +396,7 @@ void main() async {
 
     test('runs benchmark in WASM flavor if node is available', () async {
       if (!await _isNodeAvailable()) {
-        print('Skipping WASM runner test: node is not available');
+        markTestSkipped('node is not available');
         return;
       }
 
@@ -439,7 +445,7 @@ void main() async {
       c.bench('banana_bench', () {}, samples: 5, warmupDuration: Duration(milliseconds: 5));
       c.bench('cherry_bench', () {}, samples: 5, warmupDuration: Duration(milliseconds: 5));
     },
-    config: CriterionConfig(exportJson: false, generateHtmlReport: false),
+    config: CriterionConfig(exportJson: false, generateHtmlReport: false, exportHistory: false),
   );
 }
 ''');
@@ -662,7 +668,7 @@ void main() async {
     (c) {
       c.bench('bench_from_one', () {}, samples: 5, warmupDuration: Duration(milliseconds: 5));
     },
-    config: CriterionConfig(exportJson: false, generateHtmlReport: false),
+    config: CriterionConfig(exportJson: false, generateHtmlReport: false, exportHistory: false),
   );
 }
 ''');
@@ -676,7 +682,7 @@ void main() async {
     (c) {
       c.bench('bench_from_two', () {}, samples: 5, warmupDuration: Duration(milliseconds: 5));
     },
-    config: CriterionConfig(exportJson: false, generateHtmlReport: false),
+    config: CriterionConfig(exportJson: false, generateHtmlReport: false, exportHistory: false),
   );
 }
 ''');

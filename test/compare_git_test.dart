@@ -12,6 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+@Timeout(Duration(minutes: 3))
+library;
+
 import 'dart:io';
 import 'package:test/test.dart';
 
@@ -44,6 +47,7 @@ void main() async {
     config: CriterionConfig(
       generateHtmlReport: false,
       exportJson: false,
+      exportHistory: false,
       reportDir: 'custom_report_dir',
     ),
   );
@@ -82,19 +86,27 @@ void main() async {
       expect(result.stdout, contains('Significant?'));
       expect(result.stdout, contains('dummy_bench'));
     });
+
     test('cleans up worktree on invalid ref failure', () async {
       final dartExe = Platform.resolvedExecutable;
       final compareGitScript = 'bin/compare_git.dart';
 
+      final beforeWorktrees = await Process.run('git', ['worktree', 'list']);
       final result = await Process.run(dartExe, [
         compareGitScript,
         'HEAD',
         'invalid_nonexistent_ref_xyz',
         dummyFile.path,
       ]);
+      final afterWorktrees = await Process.run('git', ['worktree', 'list']);
 
       expect(result.exitCode, isNot(0));
       expect(result.stdout, contains('Cleaning up worktree at'));
+      expect(
+        afterWorktrees.stdout,
+        equals(beforeWorktrees.stdout),
+        reason: 'Worktree list should have no leaked temporary worktrees',
+      );
     });
   });
 }

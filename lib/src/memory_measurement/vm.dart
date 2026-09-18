@@ -68,6 +68,13 @@ void main(List<String> args, SendPort initReplyPort) async {
       },
     );
 
+    // Bounded wait for a single `getAllocationProfile` reply. The `gc: true`
+    // variant forces a full GC of the benchmarked isolate, which can take a
+    // while on a large heap, so this is deliberately generous: it only exists
+    // so that a wedged VM Service surfaces as an error instead of hanging the
+    // benchmark run forever.
+    const rpcTimeout = Duration(seconds: 30);
+
     Future<Map<String, dynamic>> callGetAllocationProfile({
       bool gc = false,
       bool reset = false,
@@ -88,7 +95,16 @@ void main(List<String> args, SendPort initReplyPort) async {
           'params': params,
         }),
       );
-      final response = await completer.future;
+      final response = await completer.future.timeout(
+        rpcTimeout,
+        onTimeout: () {
+          pending.remove(id);
+          throw TimeoutException(
+            'getAllocationProfile did not answer within',
+            rpcTimeout,
+          );
+        },
+      );
       if (response.containsKey('error')) {
         throw Exception('VM Service error: ${response['error']}');
       }
@@ -198,6 +214,9 @@ void main(List<String> args, SendPort initReplyPort) async {
         replyPort?.send([totalBytes, totalInstances, classMap.values.toList()]);
       } else if (command == 'dispose') {
         await ws.close();
+        // Acknowledge only after the WebSocket is actually closed, so the
+        // parent knows the VM Service connection is gone before it kills us.
+        replyPort?.send(true);
         commandPort.close();
         return;
       }
@@ -212,6 +231,70 @@ void main(List<String> args, SendPort initReplyPort) async {
   }
 }
 ''';
+
+/// Maximum time to wait for the helper isolate to report readiness.
+///
+/// Startup covers spawning an isolate in a fresh isolate group, compiling the
+/// helper script, opening a WebSocket to the VM Service and performing one
+/// warm-up `getAllocationProfile`. On a cold, heavily loaded machine that can
+/// take a few seconds, so the bound is deliberately generous: it exists only
+/// to turn "the helper died and nobody noticed" into a prompt, diagnosable
+/// failure instead of a benchmark run that hangs forever.
+const Duration _helperStartupTimeout = Duration(seconds: 60);
+
+/// Maximum time to wait for the helper isolate to answer a single command.
+///
+/// The slowest command is `baseline`, which forces a full GC of the
+/// benchmarked isolate before reading the allocation profile; on a large heap
+/// that is seconds, not milliseconds.
+const Duration _helperCommandTimeout = Duration(seconds: 45);
+
+/// Maximum time to wait for the helper isolate to acknowledge `dispose`.
+///
+/// Closing a WebSocket is quick; this only bounds the case where the helper is
+/// already wedged or dead, in which case it is killed instead.
+const Duration _helperDisposeTimeout = Duration(seconds: 10);
+
+/// Awaits the helper isolate's reply to [command].
+///
+/// [helperDown] completes with a human readable reason when the helper isolate
+/// has died; the wait is abandoned as soon as that happens.
+///
+/// Throws a [TimeoutException] if no reply arrives within
+/// [_helperCommandTimeout], and a [StateError] if the helper died or closed the
+/// response port before replying. Both are far better than reading
+/// [StreamIterator.current] without checking [StreamIterator.moveNext]'s
+/// result, which fails with an opaque `StateError` only at the point of use.
+Future<Object?> _awaitHelperReply(
+  StreamIterator<dynamic> responses,
+  Future<String> helperDown,
+  String command,
+) async {
+  final bool hasReply;
+  try {
+    hasReply = await Future.any([
+      responses.moveNext(),
+      helperDown.then<bool>(
+        (reason) => throw StateError(
+          'Memory helper isolate died while waiting for a reply to '
+          '"$command": $reason.',
+        ),
+      ),
+    ]).timeout(_helperCommandTimeout);
+  } on TimeoutException {
+    throw TimeoutException(
+      'Memory helper isolate did not reply to "$command" within',
+      _helperCommandTimeout,
+    );
+  }
+  if (!hasReply) {
+    throw StateError(
+      'Memory helper isolate closed the response port without replying to '
+      '"$command"; it most likely crashed.',
+    );
+  }
+  return responses.current;
+}
 
 /// Helper to perform memory measurements using the VM Service.
 final class MemoryMeasurer {
@@ -229,6 +312,22 @@ final class MemoryMeasurer {
     dart_isolate.ReceivePort? responsePort;
     StreamIterator<dynamic>? responseIterator;
     dart_isolate.SendPort? helperSendPort;
+
+    // Lifetime monitoring for the helper isolate. `onExit`/`onError` are the
+    // only way to notice that the helper died: the response ports are owned by
+    // *this* isolate, so they never close on their own and a wait for a reply
+    // that will never arrive would otherwise hang (or, at best, run into its
+    // timeout). Completed with a human readable reason, never with an error,
+    // so that nothing here can become an unhandled asynchronous error.
+    final helperExitPort = dart_isolate.ReceivePort();
+    final helperErrorPort = dart_isolate.ReceivePort();
+    final helperDown = Completer<String>();
+    helperExitPort.listen((_) {
+      if (!helperDown.isCompleted) helperDown.complete('it exited');
+    });
+    helperErrorPort.listen((error) {
+      if (!helperDown.isCompleted) helperDown.complete('it crashed: $error');
+    });
 
     // Cap effective iterations to 500 and per-batch size to 100 so that a single
     // batch does not overflow NewSpace (~16 MB) and trigger a minor GC scavenge
@@ -256,29 +355,64 @@ final class MemoryMeasurer {
       // (falls back to Isolate.spawn if spawnUri is unavailable, e.g. in AOT).
       var usedSeparateIsolateGroup = false;
       final initPort = dart_isolate.ReceivePort();
+      final Object? initResult;
       try {
-        final dataUri = Uri.dataFromString(
-          _helperIsolateScript,
-          mimeType: 'application/dart',
+        final init = Completer<Object?>();
+        initPort.listen((message) {
+          if (!init.isCompleted) init.complete(message);
+        });
+        unawaited(
+          helperDown.future.then((reason) {
+            if (!init.isCompleted) {
+              init.completeError(
+                StateError(
+                  'Memory helper isolate never signalled readiness: $reason.',
+                ),
+              );
+            }
+          }),
         );
-        helperIsolate = await dart_isolate.Isolate.spawnUri(dataUri, [
-          wsUri.toString(),
-          targetIsolateId,
-        ], initPort.sendPort);
-        usedSeparateIsolateGroup = true;
-      } catch (_) {
-        helperIsolate = await dart_isolate.Isolate.spawn(
-          _memoryHelperFallbackEntry,
-          _HelperInit(
-            wsUri: wsUri.toString(),
-            targetIsolateId: targetIsolateId,
-            replyPort: initPort.sendPort,
-          ),
-        );
-      }
 
-      final initResult = await initPort.first;
-      initPort.close();
+        try {
+          final dataUri = Uri.dataFromString(
+            _helperIsolateScript,
+            mimeType: 'application/dart',
+          );
+          helperIsolate = await dart_isolate.Isolate.spawnUri(
+            dataUri,
+            [wsUri.toString(), targetIsolateId],
+            initPort.sendPort,
+            onExit: helperExitPort.sendPort,
+            onError: helperErrorPort.sendPort,
+          );
+          usedSeparateIsolateGroup = true;
+        } catch (_) {
+          helperIsolate = await dart_isolate.Isolate.spawn(
+            _memoryHelperFallbackEntry,
+            _HelperInit(
+              wsUri: wsUri.toString(),
+              targetIsolateId: targetIsolateId,
+              replyPort: initPort.sendPort,
+            ),
+            onExit: helperExitPort.sendPort,
+            onError: helperErrorPort.sendPort,
+          );
+        }
+
+        try {
+          initResult = await init.future.timeout(_helperStartupTimeout);
+        } on TimeoutException {
+          throw TimeoutException(
+            'Memory helper isolate did not become ready within',
+            _helperStartupTimeout,
+          );
+        }
+      } finally {
+        // Closing this on *every* path matters: if both spawn attempts throw,
+        // a still-open ReceivePort keeps the event loop alive and the process
+        // never exits.
+        initPort.close();
+      }
       if (initResult is! dart_isolate.SendPort) {
         throw Exception('Helper isolate failed to initialize: $initResult');
       }
@@ -289,9 +423,13 @@ final class MemoryMeasurer {
       // 4. Perform a 0-iteration calibration round-trip to warm up SendPort/RPC
       // paths and record any fixed message-passing allocation overhead per batch.
       helperSendPort.send(['baseline', responsePort.sendPort]);
-      await responseIterator.moveNext();
+      await _awaitHelperReply(responseIterator, helperDown.future, 'baseline');
       helperSendPort.send(['calibrateEnd', responsePort.sendPort]);
-      await responseIterator.moveNext();
+      await _awaitHelperReply(
+        responseIterator,
+        helperDown.future,
+        'calibrateEnd',
+      );
 
       final mode =
           batchSize ??
@@ -314,7 +452,11 @@ final class MemoryMeasurer {
 
         // Request helper isolate to reset baseline with GC
         helperSendPort.send(['baseline', responsePort.sendPort]);
-        await responseIterator.moveNext();
+        await _awaitHelperReply(
+          responseIterator,
+          helperDown.future,
+          'baseline',
+        );
 
         final baselineRss = ProcessInfo.currentRss;
 
@@ -338,7 +480,11 @@ final class MemoryMeasurer {
 
         // Request helper isolate to record end batch allocation profile
         helperSendPort.send(['endBatch', responsePort.sendPort]);
-        await responseIterator.moveNext();
+        await _awaitHelperReply(
+          responseIterator,
+          helperDown.future,
+          'endBatch',
+        );
 
         if (teardown != null) {
           for (var i = 0; i < batch; i++) {
@@ -352,8 +498,13 @@ final class MemoryMeasurer {
 
       // Request totals and class allocations from helper isolate
       helperSendPort.send(['getTotals', responsePort.sendPort]);
-      await responseIterator.moveNext();
-      final rawTotals = responseIterator.current as List<dynamic>;
+      final rawTotals =
+          (await _awaitHelperReply(
+                responseIterator,
+                helperDown.future,
+                'getTotals',
+              ))
+              as List<dynamic>;
       final totalBytes = rawTotals[0] as int;
       final totalInstances = rawTotals[1] as int;
       final rawClassList = rawTotals[2] as List<dynamic>;
@@ -449,12 +600,23 @@ final class MemoryMeasurer {
         return null;
       }
     } finally {
-      if (helperSendPort != null) {
+      if (helperSendPort != null && !helperDown.isCompleted) {
+        final disposePort = dart_isolate.ReceivePort();
         try {
-          helperSendPort.send(['dispose', null]);
-        } catch (_) {}
+          helperSendPort.send(['dispose', disposePort.sendPort]);
+          await Future.any([
+            disposePort.first,
+            helperDown.future,
+          ]).timeout(_helperDisposeTimeout);
+        } catch (_) {
+          // Helper is already gone or wedged; kill below will clean it up.
+        } finally {
+          disposePort.close();
+        }
       }
       helperIsolate?.kill(priority: dart_isolate.Isolate.immediate);
+      helperExitPort.close();
+      helperErrorPort.close();
     }
   }
 }
@@ -472,12 +634,15 @@ final class _HelperInit {
 }
 
 void _memoryHelperFallbackEntry(_HelperInit init) async {
+  const rpcTimeout = Duration(seconds: 30);
   final commandPort = dart_isolate.ReceivePort();
   VmService? service;
   try {
-    service = await vmServiceConnectUri(init.wsUri);
+    final s = service = await vmServiceConnectUri(
+      init.wsUri,
+    ).timeout(rpcTimeout);
     final targetIsolateId = init.targetIsolateId;
-    await service.getAllocationProfile(targetIsolateId);
+    await s.getAllocationProfile(targetIsolateId).timeout(rpcTimeout);
     init.replyPort.send(commandPort.sendPort);
 
     int totalBytes = 0;
@@ -494,18 +659,18 @@ void _memoryHelperFallbackEntry(_HelperInit init) async {
           : null;
 
       if (command == 'baseline') {
-        final baseline = await service.getAllocationProfile(
-          targetIsolateId,
-          gc: true,
-          reset: true,
-        );
+        final baseline = await s
+            .getAllocationProfile(targetIsolateId, gc: true, reset: true)
+            .timeout(rpcTimeout);
         baselineMembers = {
           for (var member in baseline.members ?? <ClassHeapStats>[])
             if (member.classRef?.id != null) member.classRef!.id!: member,
         };
         replyPort?.send(true);
       } else if (command == 'calibrateEnd') {
-        final endProfile = await service.getAllocationProfile(targetIsolateId);
+        final endProfile = await s
+            .getAllocationProfile(targetIsolateId)
+            .timeout(rpcTimeout);
         overheadMembers.clear();
         for (final endMember in endProfile.members ?? <ClassHeapStats>[]) {
           final classId = endMember.classRef?.id;
@@ -526,7 +691,9 @@ void _memoryHelperFallbackEntry(_HelperInit init) async {
         }
         replyPort?.send(true);
       } else if (command == 'endBatch') {
-        final endProfile = await service.getAllocationProfile(targetIsolateId);
+        final endProfile = await s
+            .getAllocationProfile(targetIsolateId)
+            .timeout(rpcTimeout);
         for (final endMember in endProfile.members ?? <ClassHeapStats>[]) {
           final classId = endMember.classRef?.id;
           if (classId == null) continue;
@@ -571,7 +738,9 @@ void _memoryHelperFallbackEntry(_HelperInit init) async {
       } else if (command == 'getTotals') {
         replyPort?.send([totalBytes, totalInstances, classMap.values.toList()]);
       } else if (command == 'dispose') {
-        await service.dispose();
+        service = null;
+        await s.dispose().timeout(_helperDisposeTimeout);
+        replyPort?.send(true);
         commandPort.close();
         return;
       }
@@ -581,7 +750,9 @@ void _memoryHelperFallbackEntry(_HelperInit init) async {
     commandPort.close();
   } finally {
     if (service != null) {
-      await service.dispose();
+      try {
+        await service.dispose().timeout(_helperDisposeTimeout);
+      } catch (_) {}
     }
   }
 }

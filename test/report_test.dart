@@ -340,11 +340,75 @@ void main() {
         final htmlContent = htmlFile.readAsStringSync();
         expect(
           htmlContent,
-          contains(r'bench_<\/script><script>alert(1)<\/script>'),
+          contains(
+            r'bench_\u003c/script\u003e\u003cscript\u003ealert(1)'
+            r'\u003c/script\u003e',
+          ),
         );
         expect(htmlContent, isNot(contains(r'bench_</script>')));
       },
     );
+
+    test(
+      'escapes <!--<script in benchmark results within embedded JSON',
+      () async {
+        // `</` escaping alone does not help here: `<!--<script` puts the HTML
+        // tokenizer into script-data-double-escaped state, after which the
+        // real </script> no longer closes the element.
+        final config = CriterionConfig(
+          reportDir: tempDir.path,
+          generateHtmlReport: true,
+          exportJson: false,
+          useKbssd: false,
+        );
+
+        await criterion('Double Escape Test', (c) {
+          c.bench(
+            'bench_<!--<script>',
+            () {},
+            samples: 5,
+            warmupDuration: Duration.zero,
+          );
+        }, config: config);
+
+        final htmlContent = File(
+          '${tempDir.path}/index.html',
+        ).readAsStringSync();
+
+        // The payload must not appear literally anywhere in the document.
+        expect(htmlContent, isNot(contains('<!--<script')));
+        expect(htmlContent, contains(r'bench_\u003c!--\u003cscript\u003e'));
+      },
+    );
+
+    test('embedded JSON contains no raw <, > or & from result data', () async {
+      final config = CriterionConfig(
+        reportDir: tempDir.path,
+        generateHtmlReport: true,
+        exportJson: false,
+        useKbssd: false,
+      );
+
+      await criterion('Angle Bracket Suite', (c) {
+        c.bench('a<b && c>d', () {}, samples: 5, warmupDuration: Duration.zero);
+      }, config: config);
+
+      final htmlContent = File('${tempDir.path}/index.html').readAsStringSync();
+
+      // Pull out just the two embedded JSON literals and check them, rather
+      // than the surrounding page, which is legitimately full of markup.
+      final embedded = RegExp(
+        r'const (?:data|historyData) = (\[.*?\]);',
+        dotAll: true,
+      ).allMatches(htmlContent).map((m) => m.group(1)!).toList();
+      expect(embedded, hasLength(2), reason: 'expected both JSON literals');
+
+      for (final json in embedded) {
+        expect(json, isNot(contains('<')));
+        expect(json, isNot(contains('>')));
+        expect(json, isNot(contains('&')));
+      }
+    });
 
     test('creates reportDir recursively when it does not exist', () async {
       final nonExistentDir = '${tempDir.path}/deep/nested/report';

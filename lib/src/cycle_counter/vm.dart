@@ -20,7 +20,7 @@ import 'compiler.dart';
 typedef GetCyclesFunc = Uint64 Function();
 typedef GetCycles = int Function();
 
-@Native<Uint64 Function()>(symbol: 'get_cycles')
+@Native<Uint64 Function()>(symbol: 'get_cycles', isLeaf: true)
 external int _nativeGetCycles();
 
 /// Native CPU cycle counter for x86_64 and ARM64.
@@ -51,7 +51,7 @@ final class CycleCounter {
         _dylib = DynamicLibrary.open(libPath);
         _getCycles = _dylib!
             .lookup<NativeFunction<GetCyclesFunc>>('get_cycles')
-            .asFunction<GetCycles>();
+            .asFunction<GetCycles>(isLeaf: true);
         // Test read
         final c = _getCycles!();
         _supported = c > 0;

@@ -12,6 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// The `@Native` declarations below have no accompanying native asset, so the
+// symbols are resolved against the symbols of the running process. That works
+// on Linux and macOS (libc is already loaded), but not on Windows. Run this
+// suite on Linux or macOS.
+
 import 'dart:ffi';
 import 'package:criterion/criterion.dart';
 import 'package:ffi/ffi.dart';
@@ -74,15 +79,14 @@ void main() async {
           for (var i = 0; i < 100; i++) {
             s += 'a';
           }
-          if (s.isEmpty) throw StateError('must not be empty');
+          blackhole(s);
         });
         c.bench('StringBuffer', () {
           final sb = StringBuffer();
           for (var i = 0; i < 100; i++) {
             sb.write('a');
           }
-          final s = sb.toString();
-          if (s.isEmpty) throw StateError('must not be empty');
+          blackhole(sb.toString());
         });
       });
 
@@ -95,10 +99,10 @@ void main() async {
       c.bench(
         'strlen (1000 chars)',
         () {
-          strlenLeaf(str1000.cast<Char>());
+          blackhole(strlenLeaf(str1000.cast<Char>()));
         },
         noOp: () {
-          strlenLeaf(strEmpty.cast<Char>());
+          blackhole(strlenLeaf(strEmpty.cast<Char>()));
         },
       );
     });

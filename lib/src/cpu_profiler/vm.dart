@@ -23,6 +23,25 @@ import '../batch_size.dart';
 import '../blackhole.dart';
 import '../result.dart';
 
+/// Maximum time to wait for the VM Service WebSocket handshake.
+///
+/// Connecting is normally instantaneous (the server runs in this process), but
+/// the web server is started lazily just before this call and a loaded machine
+/// can take a moment to accept the socket. Several seconds is far more than
+/// ever needed; the bound only exists so that a broken VM Service turns into a
+/// diagnosable failure instead of a benchmark run that hangs forever.
+const Duration _vmServiceConnectTimeout = Duration(seconds: 15);
+
+/// Maximum time to wait for a single VM Service RPC.
+///
+/// `getCpuSamples` has to serialise the whole sample buffer of a long
+/// benchmark run, which is by far the slowest call made here and can take a
+/// couple of seconds on a big profile, so the bound is deliberately generous.
+const Duration _vmServiceCallTimeout = Duration(seconds: 30);
+
+/// Maximum time to wait for the VM Service connection to shut down.
+const Duration _vmServiceDisposeTimeout = Duration(seconds: 10);
+
 /// Helper to collect CPU profiles using the VM Service.
 final class CpuProfiler {
   /// Collects CPU samples during execution of [fn].
@@ -40,7 +59,9 @@ final class CpuProfiler {
       final uri = info.serverUri;
       if (uri == null) return null;
       final wsUri = uri.replace(scheme: 'ws', path: '${uri.path}ws');
-      service = await vmServiceConnectUri(wsUri.toString());
+      service = await vmServiceConnectUri(
+        wsUri.toString(),
+      ).timeout(_vmServiceConnectTimeout);
 
       final isolateId = developer.Service.getIsolateId(
         dart_isolate.Isolate.current,
@@ -49,14 +70,32 @@ final class CpuProfiler {
 
       // Enable profiler if disabled
       try {
-        final flagList = await service.getFlagList();
+        final flagList = await service.getFlagList().timeout(
+          _vmServiceCallTimeout,
+        );
         for (final flag in flagList.flags ?? <Flag>[]) {
           if (flag.name == 'profiler' && flag.valueAsString == 'false') {
-            await service.setFlag('profiler', 'true');
+            // Most VM versions refuse to flip `profiler` after startup, and
+            // they signal that by returning an `Error` response rather than by
+            // throwing, so the result has to be inspected explicitly.
+            final response = await service
+                .setFlag('profiler', 'true')
+                .timeout(_vmServiceCallTimeout);
+            if (response is! Success) {
+              stderr.writeln(
+                'Warning: could not enable the VM `profiler` flag at runtime '
+                '(response: $response). CPU profiling will likely report zero '
+                'samples; pass `--profiler` to the Dart VM (for `dart test`: '
+                '`--vm-args=--profiler`) to enable it at startup.',
+              );
+            }
           }
         }
-      } catch (_) {
-        // Ignore
+      } catch (e) {
+        stderr.writeln(
+          'Warning: failed to inspect or enable the VM `profiler` flag: $e. '
+          'CPU profiling may report zero samples.',
+        );
       }
 
       final mode =
@@ -74,13 +113,17 @@ final class CpuProfiler {
           states.add(state is Future ? await state : state);
         }
         try {
-          startTime = (await service.getVMTimelineMicros()).timestamp!;
+          startTime = (await service.getVMTimelineMicros().timeout(
+            _vmServiceCallTimeout,
+          )).timestamp!;
           for (var i = 0; i < batch; i++) {
             final r = fn(states[i]);
             final res = r is Future ? await r : r;
             Blackhole.sink = res;
           }
-          endTime = (await service.getVMTimelineMicros()).timestamp!;
+          endTime = (await service.getVMTimelineMicros().timeout(
+            _vmServiceCallTimeout,
+          )).timestamp!;
         } finally {
           if (teardown != null) {
             for (var i = 0; i < states.length; i++) {
@@ -90,7 +133,9 @@ final class CpuProfiler {
           }
         }
       } else {
-        startTime = (await service.getVMTimelineMicros()).timestamp!;
+        startTime = (await service.getVMTimelineMicros().timeout(
+          _vmServiceCallTimeout,
+        )).timestamp!;
         var remaining = iterations;
         while (remaining > 0) {
           final batch = mode.batchSizeFor(remaining);
@@ -129,15 +174,15 @@ final class CpuProfiler {
           }
           remaining -= batch;
         }
-        endTime = (await service.getVMTimelineMicros()).timestamp!;
+        endTime = (await service.getVMTimelineMicros().timeout(
+          _vmServiceCallTimeout,
+        )).timestamp!;
       }
 
       final timeSpan = endTime - startTime;
-      final cpuSamples = await service.getCpuSamples(
-        isolateId,
-        startTime,
-        timeSpan < 0 ? 0 : timeSpan,
-      );
+      final cpuSamples = await service
+          .getCpuSamples(isolateId, startTime, timeSpan < 0 ? 0 : timeSpan)
+          .timeout(_vmServiceCallTimeout);
 
       if (intervals.isNotEmpty && cpuSamples.samples != null) {
         final filteredSamples = cpuSamples.samples!.where((sample) {
@@ -222,11 +267,22 @@ final class CpuProfiler {
         sampleCount: cpuSamples.sampleCount ?? 0,
         samplePeriod: cpuSamples.samplePeriod ?? 0,
       );
-    } catch (e) {
+    } catch (e, stackTrace) {
+      // CPU profiling is best-effort: a failure must not abort the benchmark
+      // run. It must however be visible, otherwise a permanently broken
+      // profiler looks exactly like "this benchmark has no CPU profile".
+      stderr.writeln('Warning: CPU profiling failed: $e');
+      stderr.writeln(stackTrace);
       return null;
     } finally {
       if (service != null) {
-        await service.dispose();
+        try {
+          await service.dispose().timeout(_vmServiceDisposeTimeout);
+        } catch (e) {
+          stderr.writeln(
+            'Warning: failed to close the VM Service connection: $e',
+          );
+        }
       }
     }
   }

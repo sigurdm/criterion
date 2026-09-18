@@ -19,12 +19,10 @@ import 'package:ffi/ffi.dart';
 import '../batch_size.dart';
 import '../result.dart';
 
-// Architecture-specific syscall number for perf_event_open
+// Architecture-specific syscall number for perf_event_open (64-bit Linux only).
 final int? _sysPerfEventOpen = switch (Abi.current()) {
   Abi.linuxX64 => 298,
   Abi.linuxArm64 || Abi.linuxRiscv64 => 241,
-  Abi.linuxArm => 364,
-  Abi.linuxIA32 => 336,
   _ => null,
 };
 
@@ -33,17 +31,16 @@ const int _perfEventIocEnable = 0x2400;
 const int _perfEventIocDisable = 0x2401;
 const int _perfEventIocReset = 0x2403;
 
+// read_format: PERF_FORMAT_TOTAL_TIME_ENABLED (1) | PERF_FORMAT_TOTAL_TIME_RUNNING (2)
+const int _perfFormatTotalTimeEnabledAndRunning = 3;
+
 // libc mapping
 final DynamicLibrary _libc = DynamicLibrary.process();
 
 typedef _SyscallNative =
-    Int32 Function(
-      Int64 number,
-      Pointer<Void> attr,
-      Int32 pid,
-      Int32 cpu,
-      Int32 groupFd,
-      Uint64 flags,
+    Long Function(
+      Long number,
+      VarArgs<(Pointer<Void>, Int32, Int32, Int32, UnsignedLong)>,
     );
 typedef _SyscallDart =
     int Function(
@@ -63,7 +60,8 @@ final _SyscallDart? _syscall = () {
   }
 }();
 
-typedef _IoctlNative = Int32 Function(Int32 fd, Uint64 request, Int64 arg);
+typedef _IoctlNative =
+    Int32 Function(Int32 fd, UnsignedLong request, VarArgs<(Long,)>);
 typedef _IoctlDart = int Function(int fd, int request, int arg);
 final _IoctlDart? _ioctl = () {
   try {
@@ -73,7 +71,7 @@ final _IoctlDart? _ioctl = () {
   }
 }();
 
-typedef _ReadNative = Int64 Function(Int32 fd, Pointer<Void> buf, Uint64 count);
+typedef _ReadNative = Long Function(Int32 fd, Pointer<Void> buf, Size count);
 typedef _ReadDart = int Function(int fd, Pointer<Void> buf, int count);
 final _ReadDart? _read = () {
   try {
@@ -98,6 +96,22 @@ final class InstructionMeasurer {
   /// Whether hardware instruction counting is supported on this platform.
   static final bool isSupported = _checkSupported();
 
+  static Pointer<Uint8> _allocatePerfAttr() {
+    const attrSize = 120;
+    final attr = calloc<Uint8>(attrSize);
+    // type (uint32) at offset 0 -> 0 (PERF_TYPE_HARDWARE)
+    attr.cast<Uint32>().value = 0;
+    // size (uint32) at offset 4 -> attrSize (120)
+    (attr + 4).cast<Uint32>().value = attrSize;
+    // config (uint64) at offset 8 -> 0 (PERF_COUNT_HW_INSTRUCTIONS)
+    (attr + 8).cast<Uint64>().value = 0;
+    // read_format (uint64) at offset 32 -> PERF_FORMAT_TOTAL_TIME_ENABLED|RUNNING
+    (attr + 32).cast<Uint64>().value = _perfFormatTotalTimeEnabledAndRunning;
+    // flags (uint64) at offset 40 -> 97 (disabled=1, exclude_kernel=1, exclude_hv=1)
+    (attr + 40).cast<Uint64>().value = 97;
+    return attr;
+  }
+
   static bool _checkSupported() {
     if (!Platform.isLinux) return false;
     final sysOpen = _sysPerfEventOpen;
@@ -111,20 +125,8 @@ final class InstructionMeasurer {
     final readFn = _read!;
     final closeFn = _close!;
 
-    final attrSize = 120;
-    final attr = calloc<Uint8>(attrSize);
-
-    // Set fields:
-    // type (uint32) at offset 0 -> 0 (PERF_TYPE_HARDWARE)
-    attr.cast<Uint32>().value = 0;
-    // size (uint32) at offset 4 -> attrSize (120)
-    (attr + 4).cast<Uint32>().value = attrSize;
-    // config (uint64) at offset 8 -> 0 (PERF_COUNT_HW_INSTRUCTIONS)
-    (attr + 8).cast<Uint64>().value = 0;
-    // flags (uint64) at offset 40 -> 97 (disabled=1, exclude_kernel=1, exclude_hv=1)
-    (attr + 40).cast<Uint64>().value = 97;
-
-    // Open the event (pid = 0 for calling process, cpu = -1 for any CPU)
+    final attr = _allocatePerfAttr();
+    // Open the event (pid = 0 for calling thread, cpu = -1 for any CPU)
     final fd = syscallFn(sysOpen, attr.cast<Void>(), 0, -1, -1, 0);
     calloc.free(attr);
 
@@ -144,9 +146,9 @@ final class InstructionMeasurer {
 
       ioctlFn(fd, _perfEventIocDisable, 0);
 
-      final counterBuf = calloc<Uint64>();
-      final bytesRead = readFn(fd, counterBuf.cast<Void>(), 8);
-      final instructions = bytesRead == 8 ? counterBuf.value : null;
+      final counterBuf = calloc<Uint64>(3);
+      final bytesRead = readFn(fd, counterBuf.cast<Void>(), 24);
+      final instructions = bytesRead == 24 ? counterBuf[0] : null;
       calloc.free(counterBuf);
 
       return instructions != null && instructions > 0;
@@ -174,20 +176,8 @@ final class InstructionMeasurer {
     final readFn = _read!;
     final closeFn = _close!;
 
-    final attrSize = 120;
-    final attr = calloc<Uint8>(attrSize);
-
-    // Set fields:
-    // type (uint32) at offset 0 -> 0 (PERF_TYPE_HARDWARE)
-    attr.cast<Uint32>().value = 0;
-    // size (uint32) at offset 4 -> attrSize (120)
-    (attr + 4).cast<Uint32>().value = attrSize;
-    // config (uint64) at offset 8 -> 0 (PERF_COUNT_HW_INSTRUCTIONS)
-    (attr + 8).cast<Uint64>().value = 0;
-    // flags (uint64) at offset 40 -> 97 (disabled=1, exclude_kernel=1, exclude_hv=1)
-    (attr + 40).cast<Uint64>().value = 97;
-
-    // Open the event (pid = 0 for calling process, cpu = -1 for any CPU)
+    final attr = _allocatePerfAttr();
+    // Open the event (pid = 0 for calling thread, cpu = -1 for any CPU)
     final fd = syscallFn(_sysPerfEventOpen!, attr.cast<Void>(), 0, -1, -1, 0);
     calloc.free(attr);
 
@@ -245,18 +235,36 @@ final class InstructionMeasurer {
         remaining -= batch;
       }
 
-      // Read counter
-      final counterBuf = calloc<Uint64>();
-      final bytesRead = readFn(fd, counterBuf.cast<Void>(), 8);
-      final instructions = bytesRead == 8 ? counterBuf.value : null;
+      // Read counter: [value, time_enabled, time_running]
+      final counterBuf = calloc<Uint64>(3);
+      final bytesRead = readFn(fd, counterBuf.cast<Void>(), 24);
+      int? rawCount;
+      int timeEnabled = 0;
+      int timeRunning = 0;
+      if (bytesRead == 24) {
+        rawCount = counterBuf[0];
+        timeEnabled = counterBuf[1];
+        timeRunning = counterBuf[2];
+      }
       calloc.free(counterBuf);
 
-      if (instructions == null) {
+      if (rawCount == null || timeRunning <= 0) {
         return null;
       }
 
+      var scaledInstructions = rawCount.toDouble();
+      if (timeRunning < timeEnabled) {
+        final ratio = timeEnabled / timeRunning;
+        scaledInstructions *= ratio;
+        stderr.writeln(
+          'Warning: perf hardware instruction counter was multiplexed '
+          '(running ${timeRunning}ns / enabled ${timeEnabled}ns); '
+          'scaled count by ${ratio.toStringAsFixed(2)}x.',
+        );
+      }
+
       return InstructionResult(
-        instructionsPerIteration: instructions / iterations,
+        instructionsPerIteration: scaledInstructions / iterations,
       );
     } catch (_) {
       return null;

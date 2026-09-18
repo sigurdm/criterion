@@ -66,11 +66,39 @@ dart run criterion:run -f jit -f aot benchmark/my_benchmark.dart
 dart run criterion:run -f js -f wasm benchmark/my_benchmark.dart
 ```
 
-Options:
-*   `-f, --flavor`: `jit`, `aot`, `js`, or `wasm` (can be comma-separated or specified multiple times).
-*   `--json`: Output results as JSON to stdout.
-*   `--compiler-flag`: Extra flags for `dart compile`.
-*   `--vm-flag`: Extra flags for Dart VM or Node.js.
+#### `criterion:run` options
+
+| Option | Description |
+| --- | --- |
+| `-f, --flavor` | Runtime flavor: `jit`, `aot`, `js` or `wasm`. Repeatable or comma-separated. Defaults to `aot`. |
+| `--json` | Print the aggregated results as JSON on stdout instead of the human-readable report. |
+| `--compiler-flag` | Extra flag for `dart compile`. Repeatable. |
+| `--vm-flag` | Extra flag for the Dart VM (`jit`) or Node (`js`, `wasm`). Repeatable. |
+| `-k, --filter` | Run only benchmarks whose name matches this regular expression. |
+| `-q, --quick` | Fast pass: 10 samples, 50 ms warm-up, KBSSD off and all non-timing metrics off. |
+| `--samples` | Override the number of samples collected per benchmark. |
+| `--warmup-time` | Override the warm-up duration, in milliseconds. |
+| `--no-html` | Do not generate the HTML report. |
+| `--memory` | Measure allocations. Adds an extra run of every benchmark function. |
+| `--instructions` | Measure hardware instructions (Linux, see below). Adds an extra run. |
+| `--cycles` | Measure CPU cycles. Adds an extra run. |
+| `--all-metrics` | Shorthand for `--memory --instructions --cycles`. |
+| `--no-memory` | Skip allocation measurement even if the suite's config enables it. |
+| `--no-instructions` | Skip instruction measurement even if the suite's config enables it. |
+| `--no-cycles` | Skip cycle measurement even if the suite's config enables it. |
+| `--timing-only` | Skip all three extra measurement passes. |
+| `--save-baseline` | Save this run as a named baseline. See [Named baselines](#named-baselines). |
+| `--baseline` | Compare this run against a previously saved named baseline. |
+| `--fail-on-regression` | Exit with a non-zero exit code when a regression is detected. |
+| `--noise-threshold` | Relative change below which a difference counts as noise (default `0.01`, i.e. 1%). |
+
+The measurement flags combine with the suite's own `CriterionConfig`: `--memory`,
+`--instructions`, `--cycles` and `--all-metrics` add to what the config asks
+for, the `--no-*` flags and `--timing-only` remove from it, and `--quick`
+overrides everything by turning all of them off.
+
+If no benchmark file is given, every `.dart` file under `benchmark/` containing
+a `main(` is run.
 
 #### Direct JIT Execution
 ```bash
@@ -99,7 +127,7 @@ c.benchState<List<int>>(
 `setup` runs outside the measured region and produces one fresh state per iteration; the benchmark function receives it. The state type is inferred from `setup`, so a mismatched benchmark function is a compile error.
 
 ### Batched Setups (`batchSize`)
-When a benchmark uses `setup` to generate large objects or buffers, pre-allocating all benchmark iterations in memory simultaneously can cause RAM exhaustion ($O(\text{iterations})$ memory) and CPU cache eviction.
+When a benchmark uses `setup` to generate large objects or buffers, pre-allocating all benchmark iterations in memory simultaneously can cause RAM exhaustion (O(iterations) memory) and CPU cache eviction.
 
 Criterion supports **Batched Setups** via the optional `batchSize` parameter (defaulting to `BatchSize.smallInput`—batches of 1000—when `setup` is provided):
 
@@ -258,7 +286,8 @@ dart run criterion:run benchmark/ --memory        # just allocations
 
 `--no-memory`, `--no-instructions`, `--no-cycles` and `--timing-only` still
 work and override whatever the suite's own config asks for, so you can strip a
-suite back to timing without editing it.
+suite back to timing without editing it. See
+[`criterion:run` options](#criterionrun-options) for the full list.
 
 ### KBSSD Adaptive Benchmarking
 By default, Criterion uses KBSSD as an **adaptive warm-up**. It monitors a sliding window of measurements and waits until the "past" and "present" windows become statistically indistinguishable — that is, until the benchmark has reached a steady state and the JIT, caches and allocator have settled.
@@ -284,6 +313,41 @@ Compare two saved JSON reports:
 dart run criterion:compare before.json after.json
 ```
 Prints a Markdown table comparing time, memory, and instructions, with statistical significance checks.
+
+### Named baselines
+
+A named baseline is a snapshot of one run that you can compare against later,
+without checking anything in or recompiling the suite. Save one, change the
+code, then compare:
+
+```bash
+# Snapshot the current state under the name "before".
+dart run criterion:run benchmark/my_benchmark.dart --save-baseline before
+
+# ... edit the code ...
+
+# Compare the new run against that snapshot.
+dart run criterion:run benchmark/my_benchmark.dart --baseline before
+```
+
+Baselines are stored as `<historyFile directory>/baselines/<name>.json`, so with
+the default `historyFile` that is `benchmark/baselines/before.json`. A name may
+only contain letters, digits, underscores and hyphens. Saving to an existing
+name overwrites it.
+
+When `--baseline` is given, the named baseline replaces the rolling history as
+the reference for regression detection: every benchmark is compared against its
+counterpart in the baseline, and differences smaller than `--noise-threshold`
+(default 1%) are ignored. Add `--fail-on-regression` to make the run exit with a
+non-zero exit code when a regression survives that threshold, which is what you
+want in CI:
+
+```bash
+dart run criterion:run benchmark/ --baseline main --fail-on-regression --noise-threshold 0.02
+```
+
+Both options are also available on `CriterionConfig` as `saveBaseline` and
+`baseline`; the command-line flags win when both are set.
 
 ### Git Reference Comparison
 Automate comparison between two Git references (commits, branches, or tags):

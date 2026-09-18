@@ -35,6 +35,15 @@ final class CriterionConfig {
   /// The path to the history file.
   final String historyFile;
 
+  /// How many historical results to keep for each benchmark.
+  ///
+  /// Defaults to 100. Every retained entry carries its full sample times,
+  /// class allocations and CPU profile, and the whole history is embedded in
+  /// the generated HTML report, so an uncapped history eventually produces a
+  /// report the browser cannot open. Benchmarks are capped independently of
+  /// each other; the oldest entries are dropped first.
+  final int maxHistoryEntries;
+
   /// Whether to use Kernel-Based Steady-State Detection (KBSSD) for adaptive benchmarking.
   final bool useKbssd;
 
@@ -110,6 +119,7 @@ final class CriterionConfig {
     this.checkRegressions = false,
     this.cpuProfiling = false,
     this.historyFile = 'benchmark/criterion_history.json',
+    this.maxHistoryEntries = 100,
     this.useKbssd = true,
     this.kbssdWindowSize = 15,
     this.kbssdStabilityRequired = 8,
@@ -142,6 +152,7 @@ final class CriterionConfig {
   /// * [kbssdScaleFactor] is less than or equal to 0.0.
   /// * [kbssdMaxSamples] is less than twice [kbssdWindowSize].
   /// * [noiseThreshold] is negative.
+  /// * [maxHistoryEntries] is less than 1.
   void validate() {
     void check(bool ok, Object? value, String name, String message) {
       if (!ok) throw ArgumentError.value(value, name, message);
@@ -183,6 +194,12 @@ final class CriterionConfig {
       'noiseThreshold',
       'Must be >= 0.0',
     );
+    check(
+      maxHistoryEntries >= 1,
+      maxHistoryEntries,
+      'maxHistoryEntries',
+      'Must be >= 1',
+    );
   }
 
   /// Creates a copy of this configuration with the given fields replaced.
@@ -194,6 +211,7 @@ final class CriterionConfig {
     bool? checkRegressions,
     bool? cpuProfiling,
     String? historyFile,
+    int? maxHistoryEntries,
     bool? useKbssd,
     int? kbssdWindowSize,
     int? kbssdStabilityRequired,
@@ -217,6 +235,7 @@ final class CriterionConfig {
       checkRegressions: checkRegressions ?? this.checkRegressions,
       cpuProfiling: cpuProfiling ?? this.cpuProfiling,
       historyFile: historyFile ?? this.historyFile,
+      maxHistoryEntries: maxHistoryEntries ?? this.maxHistoryEntries,
       useKbssd: useKbssd ?? this.useKbssd,
       kbssdWindowSize: kbssdWindowSize ?? this.kbssdWindowSize,
       kbssdStabilityRequired:

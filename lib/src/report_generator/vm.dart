@@ -62,7 +62,7 @@ final class ReportGenerator {
     final jsonString = const JsonEncoder.withIndent(
       '  ',
     ).convert(results.map((r) => r.toJson()).toList());
-    await file.writeAsString(jsonString);
+    await _writeAtomically(file, jsonString);
     print('Exported JSON results to: ${file.path}');
   }
 
@@ -78,9 +78,50 @@ final class ReportGenerator {
       history: history,
       suiteName: suiteName,
     );
-    await file.writeAsString(htmlContent);
+    await _writeAtomically(file, htmlContent);
     print('Generated HTML report at: ${file.path}');
   }
+
+  /// Writes [contents] to [file] via a temporary sibling and a rename.
+  ///
+  /// Reports are often read by tooling while a suite is still running; a
+  /// truncated `results.json` is worse than a stale one.
+  static Future<void> _writeAtomically(File file, String contents) async {
+    final temp = File('${file.path}.tmp-$pid');
+    try {
+      await temp.writeAsString(contents, flush: true);
+      await temp.rename(file.path);
+    } catch (_) {
+      if (temp.existsSync()) {
+        try {
+          temp.deleteSync();
+        } catch (_) {
+          // Best effort; the original write error is the interesting one.
+        }
+      }
+      rethrow;
+    }
+  }
+
+  /// Encodes [results] as JSON that is safe to inline in a `<script>` element.
+  ///
+  /// Escaping `</` alone is not enough. The HTML tokenizer treats `<!--` and
+  /// `<script` inside script data specially: a benchmark name containing
+  /// `<!--<script` switches it to *script-data-double-escaped* state, in
+  /// which the closing `</script>` tag is no longer recognised and the rest
+  /// of the document is swallowed. Escaping every `<`, `>` and `&` as a JSON
+  /// `\u` sequence removes the possibility entirely, and costs nothing
+  /// because `JSON.parse` decodes them back.
+  ///
+  /// U+2028 and U+2029 are escaped as well: [jsonEncode] emits them raw, but
+  /// they are line terminators in JavaScript source.
+  static String _encodeForScript(List<BenchmarkResult> results) =>
+      jsonEncode(results.map((r) => r.toJson()).toList())
+          .replaceAll('<', r'\u003c')
+          .replaceAll('>', r'\u003e')
+          .replaceAll('&', r'\u0026')
+          .replaceAll('\u2028', r'\u2028')
+          .replaceAll('\u2029', r'\u2029');
 
   String _buildHtml(
     List<BenchmarkResult> results, {
@@ -90,12 +131,8 @@ final class ReportGenerator {
     final pageTitle = suiteName != null
         ? const HtmlEscape().convert(suiteName)
         : 'Criterion Benchmark Report';
-    final jsonResults = jsonEncode(
-      results.map((r) => r.toJson()).toList(),
-    ).replaceAll('</', r'<\/');
-    final jsonHistory = jsonEncode(
-      (history ?? []).map((r) => r.toJson()).toList(),
-    ).replaceAll('</', r'<\/');
+    final jsonResults = _encodeForScript(results);
+    final jsonHistory = _encodeForScript(history ?? const []);
 
     return '''
 <!DOCTYPE html>

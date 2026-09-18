@@ -1,0 +1,3 @@
+# Default timeout for benchmark and CLI integration suites that compile
+# sub-processes (AOT/JIT/JS/Wasm) or manage git worktrees.
+timeout: 2m

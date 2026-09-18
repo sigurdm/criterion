@@ -30,6 +30,7 @@ class LargeBuffer {
   }
 }
 
+// #region batch-modes
 void main() async {
   final criterion = Criterion();
 
@@ -74,3 +75,4 @@ void main() async {
 
   await criterion.run();
 }
+// #endregion

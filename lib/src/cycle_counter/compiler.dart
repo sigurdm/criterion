@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+import 'dart:ffi' show Abi;
 import 'dart:io';
 import 'dart:isolate';
 import 'package:path/path.dart' as p;
@@ -33,6 +34,14 @@ const String _cSource = r'''
 
 #include <stdint.h>
 
+#if defined(_WIN32)
+#define CRITERION_EXPORT __declspec(dllexport)
+#else
+#define CRITERION_EXPORT __attribute__((visibility("default")))
+#endif
+
+CRITERION_EXPORT uint64_t get_cycles(void);
+
 #if defined(__x86_64__) || defined(_M_X64)
 #ifdef _MSC_VER
 #include <intrin.h>
@@ -40,19 +49,26 @@ const String _cSource = r'''
 #include <x86intrin.h>
 #endif
 
-uint64_t get_cycles() {
+CRITERION_EXPORT uint64_t get_cycles(void) {
     return __rdtsc();
 }
 #elif defined(__aarch64__)
-uint64_t get_cycles() {
+CRITERION_EXPORT uint64_t get_cycles(void) {
     uint64_t val;
     // Read virtual timer counter. It runs at a fixed frequency (usually 1-50MHz),
     // NOT CPU clock speed, but it is high resolution and accessible from user space.
     asm volatile("mrs %0, cntvct_el0" : "=r" (val));
     return val;
 }
+#elif defined(_M_ARM64)
+#include <intrin.h>
+
+CRITERION_EXPORT uint64_t get_cycles(void) {
+    // ARM64_CNTVCT = _ARM64_SYSREG(3, 3, 14, 0, 2)
+    return (uint64_t)_ReadStatusReg(_ARM64_SYSREG(3, 3, 14, 0, 2));
+}
 #else
-uint64_t get_cycles() {
+CRITERION_EXPORT uint64_t get_cycles(void) {
     return 0; // Unsupported
 }
 #endif
@@ -65,17 +81,18 @@ final class CycleCounterCompiler {
   /// Returns `null` if compilation fails or is unsupported.
   static Future<String?> compile() async {
     try {
+      final abiTag = Abi.current().toString().replaceAll('.', '_');
       final String libName;
       final String compiler;
 
       if (Platform.isLinux) {
-        libName = 'libcycle_counter.so';
+        libName = 'libcycle_counter_$abiTag.so';
         compiler = 'gcc';
       } else if (Platform.isMacOS) {
-        libName = 'libcycle_counter.dylib';
+        libName = 'libcycle_counter_$abiTag.dylib';
         compiler = 'clang';
       } else if (Platform.isWindows) {
-        libName = 'cycle_counter.dll';
+        libName = 'cycle_counter_$abiTag.dll';
         compiler = 'gcc';
       } else {
         return null;
@@ -92,7 +109,7 @@ final class CycleCounterCompiler {
       }
 
       String cFilePath;
-      File? tempCFile;
+      Directory? tempDir;
       try {
         final packageUri = Uri.parse(
           'package:criterion/src/cycle_counter/cycle_counter.c',
@@ -101,16 +118,14 @@ final class CycleCounterCompiler {
         if (fileUri != null && File.fromUri(fileUri).existsSync()) {
           cFilePath = File.fromUri(fileUri).path;
         } else {
-          tempCFile = File(
-            p.join(Directory.systemTemp.path, 'cycle_counter_$pid.c'),
-          );
+          tempDir = Directory.systemTemp.createTempSync('criterion_cycle_');
+          final tempCFile = File(p.join(tempDir.path, 'cycle_counter.c'));
           tempCFile.writeAsStringSync(_cSource);
           cFilePath = tempCFile.path;
         }
       } catch (_) {
-        tempCFile = File(
-          p.join(Directory.systemTemp.path, 'cycle_counter_$pid.c'),
-        );
+        tempDir = Directory.systemTemp.createTempSync('criterion_cycle_');
+        final tempCFile = File(p.join(tempDir.path, 'cycle_counter.c'));
         tempCFile.writeAsStringSync(_cSource);
         cFilePath = tempCFile.path;
       }
@@ -174,9 +189,9 @@ final class CycleCounterCompiler {
 
         return targetLib.absolute.path;
       } finally {
-        if (tempCFile != null && tempCFile.existsSync()) {
+        if (tempDir != null && tempDir.existsSync()) {
           try {
-            tempCFile.deleteSync();
+            tempDir.deleteSync(recursive: true);
           } catch (_) {}
         }
       }

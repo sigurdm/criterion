@@ -27,7 +27,10 @@ final class HistoryManager {
   Future<List<BenchmarkResult>> load() async => [];
 
   /// No-op.
-  Future<void> save(List<BenchmarkResult> history) async {}
+  Future<void> save(
+    List<BenchmarkResult> history, {
+    int maxEntriesPerBenchmark = 100,
+  }) async {}
 
   /// No-op.
   Future<void> saveNamedBaseline(

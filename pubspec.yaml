@@ -2,6 +2,13 @@ name: criterion
 description: A statistics-driven benchmarking library for Dart, inspired by Rust's criterion.rs.
 version: 1.0.0
 repository: https://github.com/sigurdm/criterion
+issue_tracker: https://github.com/sigurdm/criterion/issues
+topics:
+  - benchmark
+  - benchmarking
+  - performance
+  - statistics
+  - profiling
 
 environment:
   sdk: ^3.12.0

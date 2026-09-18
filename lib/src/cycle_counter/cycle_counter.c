@@ -14,6 +14,14 @@
 
 #include <stdint.h>
 
+#if defined(_WIN32)
+#define CRITERION_EXPORT __declspec(dllexport)
+#else
+#define CRITERION_EXPORT __attribute__((visibility("default")))
+#endif
+
+CRITERION_EXPORT uint64_t get_cycles(void);
+
 #if defined(__x86_64__) || defined(_M_X64)
 #ifdef _MSC_VER
 #include <intrin.h>
@@ -21,19 +29,26 @@
 #include <x86intrin.h>
 #endif
 
-uint64_t get_cycles() {
+CRITERION_EXPORT uint64_t get_cycles(void) {
     return __rdtsc();
 }
 #elif defined(__aarch64__)
-uint64_t get_cycles() {
+CRITERION_EXPORT uint64_t get_cycles(void) {
     uint64_t val;
     // Read virtual timer counter. It runs at a fixed frequency (usually 1-50MHz),
     // NOT CPU clock speed, but it is high resolution and accessible from user space.
     asm volatile("mrs %0, cntvct_el0" : "=r" (val));
     return val;
 }
+#elif defined(_M_ARM64)
+#include <intrin.h>
+
+CRITERION_EXPORT uint64_t get_cycles(void) {
+    // ARM64_CNTVCT = _ARM64_SYSREG(3, 3, 14, 0, 2)
+    return (uint64_t)_ReadStatusReg(_ARM64_SYSREG(3, 3, 14, 0, 2));
+}
 #else
-uint64_t get_cycles() {
+CRITERION_EXPORT uint64_t get_cycles(void) {
     return 0; // Unsupported
 }
 #endif

@@ -159,7 +159,7 @@ double calculateMMD(List<double> X, List<double> Y, double sigma) {
 /// deterministically so that convergence decisions are reproducible.
 ///
 /// Performance considerations:
-/// * Runs in $O(permutations \times n^2)$ time and $O(n)$ space.
+/// * Runs in `O(permutations * n^2)` time and `O(n)` space.
 ///
 /// It is an error if [values] contains fewer than two elements, if [sigma] is
 /// not positive, if [permutations] is less than 1, or if [quantile] is not

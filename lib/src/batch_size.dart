@@ -17,23 +17,27 @@
 ///
 /// When a setup function generates states that allocate significant memory or
 /// when the benchmark iteration count scales to high numbers, pre-allocating all
-/// states at once causes memory exhaustion ($O(\text{iterations})$ memory usage)
-/// and CPU cache eviction.
+/// states at once causes memory exhaustion (O(iterations) memory usage) and CPU
+/// cache eviction.
 ///
 /// Batching executes the measurement loop in smaller increments of
 /// [batchSizeFor] iterations, generating and discarding states per batch
-/// ($O(\text{batch})$ memory usage) while accumulating total stopwatch ticks,
-/// hardware instructions, and memory allocation profiles.
+/// (O(batch) memory usage) while accumulating total stopwatch ticks, hardware
+/// instructions, and memory allocation profiles.
 ///
-/// Example usage (see [example/batched_setup_example.dart](file:///usr/local/google/home/sigurdm/projects/criterion/example/batched_setup_example.dart)):
+/// Example usage:
 /// ```dart
-/// c.bench(
+/// c.benchState<List<int>>(
 ///   'sort buffer',
 ///   (list) => list.sort(),
 ///   setup: () => [5, 2, 8, 1, 9],
 ///   batchSize: BatchSize.numIterations(50),
 /// );
 /// ```
+///
+/// A complete runnable program covering every batch mode:
+///
+/// {@example /example/batched_setup_example.dart#batch-modes}
 sealed class BatchSize {
   const BatchSize();
 
@@ -57,8 +61,8 @@ sealed class BatchSize {
 
   /// Allocates all states for a measurement run in a single unbatched pass.
   ///
-  /// This disables batching and pre-allocates all $O(\text{iterations})$ states
-  /// before timing the loop.
+  /// This disables batching and pre-allocates O(iterations) states before
+  /// timing the loop.
   static const BatchSize unbatched = _Unbatched('unbatched');
 
   /// Allocates all states for a measurement run in a single unbatched pass
@@ -85,7 +89,7 @@ sealed class BatchSize {
   /// * [remainingIterations] must be greater than 0.
   ///
   /// Performance considerations:
-  /// * Runs in $O(1)$ time and $O(1)$ space.
+  /// * Runs in O(1) time and O(1) space.
   int batchSizeFor(int remainingIterations);
 }
 

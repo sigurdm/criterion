@@ -27,6 +27,7 @@ import 'blackhole.dart';
 import 'batch_size.dart';
 import 'throughput.dart';
 import 'history.dart';
+import 'history_trim.dart';
 import 'cpu_profiler.dart';
 import 'cycle_counter.dart';
 import 'package:path/path.dart' as p;
@@ -446,7 +447,13 @@ final class Criterion {
       );
     }
 
-    final fullHistory = history != null ? [...history, ...results] : results;
+    // Trimmed before it reaches either the report or the disk: the whole
+    // array is embedded in the generated HTML, so an uncapped history makes
+    // the report unopenable long before the file itself becomes a problem.
+    final fullHistory = trimHistory(
+      history != null ? [...history, ...results] : results,
+      maxEntriesPerBenchmark: effectiveConfig.maxHistoryEntries,
+    );
 
     if (env.isJson) {
       print(jsonEncode(results.map((r) => r.toJson()).toList()));
@@ -458,7 +465,10 @@ final class Criterion {
     }
 
     if (!env.isJson && effectiveConfig.exportHistory && history != null) {
-      await historyMgr.save(fullHistory);
+      await historyMgr.save(
+        fullHistory,
+        maxEntriesPerBenchmark: effectiveConfig.maxHistoryEntries,
+      );
     }
 
     if (effectiveConfig.failOnRegression && regressions.isNotEmpty) {

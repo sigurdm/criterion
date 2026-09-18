@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+import 'dart:io';
 import 'package:criterion/src/instruction_measurement.dart';
 import 'package:test/test.dart';
 
@@ -37,9 +38,11 @@ void main() {
     });
 
     test('isSupported matches host capability', () {
-      // Just verifying we can call it without throwing.
       final supported = InstructionMeasurer.isSupported;
-      print('Instruction measurer supported on this host: $supported');
+      expect(supported, isA<bool>());
+      if (!Platform.isLinux) {
+        expect(supported, isFalse);
+      }
     });
   });
 }

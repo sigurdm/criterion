@@ -12,6 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// This example uses `@Native` without an accompanying native asset, so the
+// symbols are looked up in the symbols of the running process. That works on
+// Linux and macOS, where `labs` and `strlen` come from the already-loaded libc,
+// but not on Windows, where those symbols are not exported by the process.
+// Run this example on Linux or macOS.
+
 import 'dart:ffi';
 import 'package:criterion/criterion.dart';
 import 'package:ffi/ffi.dart';
@@ -38,12 +44,14 @@ int fib(int n) {
 
 void main() async {
   await criterion('Fibonacci', (c) {
+    // The benchmark function returns void, so results are handed to
+    // `blackhole` to keep the compiler from deleting the work being measured.
     c.bench('fib(10)', () {
-      fib(10);
+      blackhole(fib(10));
     });
 
     c.bench('fib(20)', () {
-      fib(20);
+      blackhole(fib(20));
     });
   });
 
@@ -54,7 +62,7 @@ void main() async {
         for (var i = 0; i < 100; i++) {
           s += 'a';
         }
-        if (s.isEmpty) throw StateError('must not be empty');
+        blackhole(s);
       });
 
       c.bench('StringBuffer', () {
@@ -62,23 +70,22 @@ void main() async {
         for (var i = 0; i < 100; i++) {
           sb.write('a');
         }
-        final s = sb.toString();
-        if (s.isEmpty) throw StateError('must not be empty');
+        blackhole(sb.toString());
       });
     });
   });
 
   await criterion('FFI Transition Overhead', (c) {
     c.bench('labs (Dart)', () {
-      labsDart(-100);
+      blackhole(labsDart(-100));
     });
 
     c.bench('labs (FFI Leaf)', () {
-      labsLeaf(-100);
+      blackhole(labsLeaf(-100));
     });
 
     c.bench('labs (FFI Non-Leaf)', () {
-      labsNonLeaf(-100);
+      blackhole(labsNonLeaf(-100));
     });
   });
 
@@ -92,11 +99,11 @@ void main() async {
         'strlen (1000 chars)',
         () {
           // Main function: Leaf FFI call with 1000 iterations inside strlen
-          strlenLeaf(str1000.cast<Char>());
+          blackhole(strlenLeaf(str1000.cast<Char>()));
         },
         noOp: () {
           // Overhead function: Leaf FFI call with 0 iterations (returns immediately)
-          strlenLeaf(strEmpty.cast<Char>());
+          blackhole(strlenLeaf(strEmpty.cast<Char>()));
         },
       );
     });

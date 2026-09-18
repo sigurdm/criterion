@@ -22,6 +22,9 @@ void main() {
         kbssdWindowSize: 5,
         kbssdStabilityRequired: 3,
         kbssdMaxSamples: 100,
+        exportJson: false,
+        generateHtmlReport: false,
+        exportHistory: false,
       );
 
       List<BenchmarkResult>? results;
@@ -53,11 +56,6 @@ void main() {
     test('warns and still samples if steady state is never reached', () async {
       final random = math.Random(42);
       void noisy() {
-        final stack = StackTrace.current.toString();
-        if (stack.contains('MemoryMeasurer') ||
-            stack.contains('InstructionMeasurer')) {
-          return;
-        }
         // High variance
         final ms = random.nextInt(10) + 1; // 1 to 10 ms
         sleep(Duration(milliseconds: ms));
@@ -70,6 +68,9 @@ void main() {
         kbssdStabilityRequired: 5,
         kbssdMaxSamples: 15,
         kbssdScaleFactor: 0.1,
+        exportJson: false,
+        generateHtmlReport: false,
+        exportHistory: false,
       );
 
       List<BenchmarkResult>? results;

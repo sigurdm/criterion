@@ -10,7 +10,10 @@ pubspec.lock
 benchmark/report*/
 benchmark/screenshots_report/
 benchmark/criterion_history.json
-benchmark/*_solve_benchmark.dart
+benchmark/baselines/
+
+# Temporary benchmark files written by the test suite
+test/temp_*.dart
 
 # Test coverage
 coverage/
