@@ -132,78 +132,87 @@ final class Criterion {
     );
   }
 
-  /// Registers a benchmark.
+  String _fullName(String name) =>
+      _groupPath.isEmpty ? name : '${_groupPath.join(" / ")} / $name';
+
+  /// Registers a benchmark that needs no per-iteration state.
   ///
   /// The [name] uniquely identifies this benchmark within its group.
-  /// The [fn] is the benchmark function.
   ///
-  /// If [setup] is provided, it is executed before each iteration to generate
-  /// a state of type [T], which is then passed to [fn]. In this case, [fn] must
-  /// be a function that accepts a single parameter of type [T] (e.g., `void Function(T)`).
+  /// [fn] is called repeatedly inside the measured region. If it returns a
+  /// [Future] the harness awaits it inside that region, so asynchronous
+  /// benchmarks are measured end to end.
   ///
-  /// If [setup] is not provided, [fn] must be a function that accepts no parameters
-  /// (e.g., `void Function()`).
+  /// [fn] is declared to return `void`, so an expression body such as
+  /// `() => expensive()` works and its result is fed to [Blackhole]
+  /// automatically. A block body cannot return a value; call [blackhole]
+  /// explicitly instead, otherwise the compiler may delete the work being
+  /// measured:
   ///
-  /// The [samples] configures how many measurement samples to collect.
-  /// The [warmupDuration] is the minimum time spent warming up the JIT compiler.
-  /// The [noOp] is an optional function with the same signature as [fn] that can
-  /// be used to measure and subtract harness or bridge overhead.
-  /// The [throughput] is an optional metric to track throughput (bytes or elements).
+  /// ```dart
+  /// c.bench('hash', () {
+  ///   blackhole(expensive());
+  /// });
+  /// ```
   ///
-  /// Throws [ArgumentError] if the signature of [fn] or [noOp] does not match
-  /// the requirements based on [setup] presence.
-  void bench<T>(
+  /// [samples] is how many measurement samples to collect. [warmupDuration] is
+  /// the minimum time spent warming up before calibration. [noOp] is an
+  /// optional function whose cost is measured and subtracted from every
+  /// sample, which is how you remove a known harness or FFI-bridge overhead.
+  /// [throughput] records how much work one iteration represents, so results
+  /// can be reported in bytes or elements per second.
+  ///
+  /// Use [benchState] instead when each iteration needs freshly constructed
+  /// input, so that construction is not timed.
+  void bench(
     String name,
-    Function fn, {
+    FutureOr<void> Function() fn, {
     int samples = 100,
     Duration warmupDuration = const Duration(seconds: 1),
-    Function? noOp,
+    FutureOr<void> Function()? noOp,
     Throughput? throughput,
-    FutureOr<T> Function()? setup,
-    FutureOr<void> Function(T state)? teardown,
-    BatchSize? batchSize,
   }) {
-    if (setup == null && teardown != null) {
-      throw ArgumentError(
-        'teardown can only be provided when setup is provided',
-      );
-    }
-    if (setup != null) {
-      if (fn is Function()) {
-        throw ArgumentError(
-          'fn must accept a parameter of type $T when setup is provided',
-        );
-      }
-      if (noOp != null && noOp is Function()) {
-        throw ArgumentError(
-          'noOp must accept a parameter of type $T when setup is provided',
-        );
-      }
-    } else {
-      if (fn is! Function()) {
-        throw ArgumentError(
-          'fn must not accept any parameters when setup is not provided',
-        );
-      }
-      if (noOp != null && noOp is! Function()) {
-        throw ArgumentError(
-          'noOp must not accept any parameters when setup is not provided',
-        );
-      }
-    }
+    _benchmarks.add(
+      Benchmark<void>(
+        _fullName(name),
+        fn,
+        config: effectiveConfig,
+        samples: samples,
+        warmupDuration: warmupDuration,
+        noOp: noOp,
+        throughput: throughput,
+      ),
+    );
+  }
 
-    if (setup == null && batchSize != null) {
-      throw ArgumentError(
-        'batchSize can only be provided when setup is provided',
-      );
-    }
-
-    final fullName = _groupPath.isEmpty
-        ? name
-        : '${_groupPath.join(" / ")} / $name';
+  /// Registers a benchmark that runs against freshly constructed state.
+  ///
+  /// [setup] runs outside the measured region and produces a value of type
+  /// [T]; [fn] receives that value inside the measured region. [teardown], if
+  /// given, runs outside the measured region once [fn] has been called. Each
+  /// iteration gets its own state, so benchmarks that consume or mutate their
+  /// input measure the same thing every time.
+  ///
+  /// [batchSize] controls how many states are built up front before a timed
+  /// run. Large states should use [BatchSize.largeInput] to avoid exhausting
+  /// RAM and evicting the CPU cache; see [BatchSize] for the trade-off against
+  /// timer resolution. Defaults to [BatchSize.smallInput].
+  ///
+  /// [samples], [warmupDuration], [noOp] and [throughput] behave as in [bench].
+  void benchState<T>(
+    String name,
+    FutureOr<void> Function(T state) fn, {
+    required FutureOr<T> Function() setup,
+    FutureOr<void> Function(T state)? teardown,
+    FutureOr<void> Function(T state)? noOp,
+    BatchSize? batchSize,
+    int samples = 100,
+    Duration warmupDuration = const Duration(seconds: 1),
+    Throughput? throughput,
+  }) {
     _benchmarks.add(
       Benchmark<T>(
-        fullName,
+        _fullName(name),
         fn,
         config: effectiveConfig,
         samples: samples,
@@ -230,67 +239,61 @@ final class Criterion {
     }
   }
 
-  /// Registers a group of benchmark variants to compare their performance.
+  /// Registers a group of competing implementations to compare against each
+  /// other.
   ///
-  /// The [groupName] identifies the group of variants.
-  /// The [variants] map contains variant names and their corresponding functions.
+  /// [groupName] identifies the group; the keys of [variants] name the
+  /// individual implementations. Every variant is reported as its own
+  /// benchmark and additionally compared head to head in the report.
   ///
-  /// If [setup] is provided, it is executed before each iteration to generate
-  /// a state of type [T] for each variant. In this case, all variant functions
-  /// must accept a single parameter of type [T].
+  /// [samples], [warmupDuration] and [throughput] apply to every variant.
   ///
-  /// If [setup] is not provided, all variant functions must accept no parameters.
-  ///
-  /// The [samples], [warmupDuration], and [throughput] apply to all variants in the group.
-  ///
-  /// Throws [ArgumentError] if any variant function signature does not match
-  /// the requirements based on [setup] presence.
-  void variants<T>(
+  /// Use [variantsState] when the variants need freshly constructed input.
+  void variants(
     String groupName,
-    Map<String, Function> variants, {
+    Map<String, FutureOr<void> Function()> variants, {
     int samples = 100,
     Duration warmupDuration = const Duration(seconds: 1),
     Throughput? throughput,
-    FutureOr<T> Function()? setup,
+  }) {
+    final baseName = _fullName(groupName);
+    variants.forEach((variantName, fn) {
+      _benchmarks.add(
+        Benchmark<void>(
+          '$baseName / $variantName',
+          fn,
+          config: effectiveConfig,
+          samples: samples,
+          warmupDuration: warmupDuration,
+          variantGroup: groupName,
+          variantName: variantName,
+          throughput: throughput,
+        ),
+      );
+    });
+  }
+
+  /// Registers a group of competing implementations that each run against
+  /// freshly constructed state.
+  ///
+  /// Behaves like [variants], but [setup], [teardown] and [batchSize] work as
+  /// described on [benchState]. Every variant is given its own state, built by
+  /// the same [setup], so the comparison is fair.
+  void variantsState<T>(
+    String groupName,
+    Map<String, FutureOr<void> Function(T state)> variants, {
+    required FutureOr<T> Function() setup,
     FutureOr<void> Function(T state)? teardown,
     BatchSize? batchSize,
+    int samples = 100,
+    Duration warmupDuration = const Duration(seconds: 1),
+    Throughput? throughput,
   }) {
-    if (setup == null && teardown != null) {
-      throw ArgumentError(
-        'teardown can only be provided when setup is provided',
-      );
-    }
+    final baseName = _fullName(groupName);
     variants.forEach((variantName, fn) {
-      if (setup != null) {
-        if (fn is Function()) {
-          throw ArgumentError(
-            'Variant "$variantName" must accept a parameter of type $T when setup is provided',
-          );
-        }
-      } else {
-        if (fn is! Function()) {
-          throw ArgumentError(
-            'Variant "$variantName" must not accept any parameters when setup is not provided',
-          );
-        }
-      }
-    });
-
-    if (setup == null && batchSize != null) {
-      throw ArgumentError(
-        'batchSize can only be provided when setup is provided',
-      );
-    }
-
-    final baseName = _groupPath.isEmpty
-        ? groupName
-        : '${_groupPath.join(" / ")} / $groupName';
-
-    variants.forEach((variantName, fn) {
-      final fullName = '$baseName / $variantName';
       _benchmarks.add(
         Benchmark<T>(
-          fullName,
+          '$baseName / $variantName',
           fn,
           config: effectiveConfig,
           samples: samples,
@@ -306,130 +309,73 @@ final class Criterion {
     });
   }
 
-  /// Registers a benchmark that is run with different parameters.
+  /// Registers one benchmark per entry in [parameters], to measure how cost
+  /// scales with the input.
   ///
-  /// The [groupName] identifies the group of parameterized benchmarks.
-  /// The [parameters] is a list of values to run the benchmark with.
-  /// The [fn] is the benchmark function.
+  /// [fn] is called with the parameter value inside the measured region. The
+  /// resulting benchmarks share [groupName] so the report can plot them
+  /// against each other and estimate a complexity curve.
   ///
-  /// If [setup] is provided, it is executed before each iteration to generate
-  /// a state of type [T] for each parameter value. In this case, [fn] must
-  /// accept either [T] (the state) or both [T] and [P] (the state and the parameter).
+  /// [throughput] is a function rather than a value so that each parameter can
+  /// declare how much work it represents.
   ///
-  /// If [setup] is not provided, [fn] must accept [P] (the parameter).
-  ///
-  /// The [samples], [warmupDuration], and [throughput] apply to all runs.
-  /// [throughput] can be a function that returns a [Throughput] for a given parameter.
-  void benchWith<T, P>(
+  /// Use [benchWithState] when each iteration also needs freshly constructed
+  /// state derived from the parameter.
+  void benchWith<P>(
     String groupName,
     List<P> parameters,
-    Function fn, {
+    FutureOr<void> Function(P param) fn, {
     int samples = 100,
     Duration warmupDuration = const Duration(seconds: 1),
-    Function? noOp,
+    FutureOr<void> Function(P param)? noOp,
     Throughput Function(P param)? throughput,
-    FutureOr<T> Function(P param)? setup,
-    FutureOr<void> Function(T state)? teardown,
-    BatchSize? batchSize,
   }) {
-    if (setup == null && teardown != null) {
-      throw ArgumentError(
-        'teardown can only be provided when setup is provided',
-      );
-    }
-    if (setup == null && batchSize != null) {
-      throw ArgumentError(
-        'batchSize can only be provided when setup is provided',
-      );
-    }
-
     for (final p in parameters) {
-      final String fullName = _groupPath.isEmpty
-          ? '$groupName / $p'
-          : '${_groupPath.join(" / ")} / $groupName / $p';
-
-      final FutureOr<T> Function()? wrappedSetup = setup != null
-          ? () => setup(p)
-          : null;
-
-      final Function wrappedFn;
-      final Function? wrappedNoOp;
-
-      if (setup != null) {
-        if (fn is Function(T, P)) {
-          wrappedFn = (T state) => fn(state, p);
-        } else if (fn is Function(T)) {
-          wrappedFn = fn;
-        } else if (fn is Function(dynamic, dynamic)) {
-          wrappedFn = (T state) => fn(state, p);
-        } else if (fn is Function(dynamic)) {
-          wrappedFn = fn;
-        } else {
-          throw ArgumentError(
-            'fn must accept (T state) or (T state, P parameter) when setup is provided',
-          );
-        }
-
-        if (noOp != null) {
-          if (noOp is Function(T, P)) {
-            wrappedNoOp = (T state) => noOp(state, p);
-          } else if (noOp is Function(T)) {
-            wrappedNoOp = noOp;
-          } else if (noOp is Function(dynamic, dynamic)) {
-            wrappedNoOp = (T state) => noOp(state, p);
-          } else if (noOp is Function(dynamic)) {
-            wrappedNoOp = noOp;
-          } else {
-            throw ArgumentError(
-              'noOp must accept (T state) or (T state, P parameter) when setup is provided',
-            );
-          }
-        } else {
-          wrappedNoOp = null;
-        }
-      } else {
-        if (fn is Function(P)) {
-          wrappedFn = () => fn(p);
-        } else if (fn is Function(dynamic)) {
-          wrappedFn = () => fn(p);
-        } else if (fn is Function()) {
-          // If it takes no arguments, it's an error because it should take the parameter
-          throw ArgumentError(
-            'fn must accept (P parameter) when setup is not provided',
-          );
-        } else {
-          wrappedFn = () => fn(p);
-        }
-
-        if (noOp != null) {
-          if (noOp is Function(P)) {
-            wrappedNoOp = () => noOp(p);
-          } else if (noOp is Function(dynamic)) {
-            wrappedNoOp = () => noOp(p);
-          } else if (noOp is Function()) {
-            throw ArgumentError(
-              'noOp must accept (P parameter) when setup is not provided',
-            );
-          } else {
-            wrappedNoOp = () => noOp(p);
-          }
-        } else {
-          wrappedNoOp = null;
-        }
-      }
-
-      final tp = throughput != null ? throughput(p) : null;
-
       _benchmarks.add(
-        Benchmark<T>(
-          fullName,
-          wrappedFn,
+        Benchmark<void>(
+          _fullName('$groupName / $p'),
+          () => fn(p),
           config: effectiveConfig,
           samples: samples,
           warmupDuration: warmupDuration,
-          noOp: wrappedNoOp,
-          throughput: tp,
-          setup: wrappedSetup,
+          noOp: noOp == null ? null : () => noOp(p),
+          throughput: throughput?.call(p),
+          parameterGroup: groupName,
+          parameterValue: p,
+        ),
+      );
+    }
+  }
+
+  /// Registers one benchmark per entry in [parameters], each running against
+  /// freshly constructed state derived from its parameter.
+  ///
+  /// [setup] receives the parameter and produces the state; [fn] receives both
+  /// the state and the parameter. [teardown] and [batchSize] work as described
+  /// on [benchState].
+  void benchWithState<T, P>(
+    String groupName,
+    List<P> parameters,
+    FutureOr<void> Function(T state, P param) fn, {
+    required FutureOr<T> Function(P param) setup,
+    FutureOr<void> Function(T state)? teardown,
+    FutureOr<void> Function(T state, P param)? noOp,
+    BatchSize? batchSize,
+    int samples = 100,
+    Duration warmupDuration = const Duration(seconds: 1),
+    Throughput Function(P param)? throughput,
+  }) {
+    for (final p in parameters) {
+      _benchmarks.add(
+        Benchmark<T>(
+          _fullName('$groupName / $p'),
+          (T state) => fn(state, p),
+          config: effectiveConfig,
+          samples: samples,
+          warmupDuration: warmupDuration,
+          noOp: noOp == null ? null : (T state) => noOp(state, p),
+          throughput: throughput?.call(p),
+          setup: () => setup(p),
           teardown: teardown,
           batchSize: batchSize,
           parameterGroup: groupName,
@@ -628,9 +574,16 @@ final class Benchmark<T> {
   final String name;
 
   /// The function to benchmark.
+  ///
+  /// This is `FutureOr<void> Function()` when [setup] is `null`, and
+  /// `FutureOr<void> Function(T)` otherwise. The constructor rejects anything
+  /// else. Prefer [Criterion.bench] and [Criterion.benchState], which express
+  /// the same thing in the static type system.
   final Function fn;
 
   /// The no-op function to measure overhead, if any.
+  ///
+  /// Has the same signature as [fn].
   final Function? noOp;
 
   /// The throughput configuration, if any.
@@ -667,6 +620,11 @@ final class Benchmark<T> {
   final Object? parameterValue;
 
   /// Creates a [Benchmark].
+  ///
+  /// Throws an [ArgumentError] if:
+  /// * [fn] or [noOp] does not have the arity required by [setup]; see [fn].
+  /// * [teardown] or [batchSize] is given without [setup], since neither means
+  ///   anything for a benchmark that has no state.
   Benchmark(
     this.name,
     this.fn, {
@@ -694,6 +652,37 @@ final class Benchmark<T> {
       throw ArgumentError(
         'batchSize can only be provided when setup is provided',
       );
+    }
+    if (setup == null) {
+      if (fn is! Function()) {
+        throw ArgumentError.value(
+          fn,
+          'fn',
+          'Must not take any parameters when setup is not provided',
+        );
+      }
+      if (noOp != null && noOp is! Function()) {
+        throw ArgumentError.value(
+          noOp,
+          'noOp',
+          'Must not take any parameters when setup is not provided',
+        );
+      }
+    } else {
+      if (fn is Function()) {
+        throw ArgumentError.value(
+          fn,
+          'fn',
+          'Must accept the state of type $T when setup is provided',
+        );
+      }
+      if (noOp != null && noOp is Function()) {
+        throw ArgumentError.value(
+          noOp,
+          'noOp',
+          'Must accept the state of type $T when setup is provided',
+        );
+      }
     }
   }
 

@@ -35,7 +35,7 @@ void main() async {
 
   // By default, when a setup callback is provided, Criterion uses
   // BatchSize.smallInput (batches of 1000) to keep memory usage bounded.
-  criterion.bench<List<int>>(
+  criterion.benchState<List<int>>(
     'Sort List (Default Batched Setup)',
     (list) => list.sort(),
     setup: () => [5, 2, 8, 1, 9, 3, 7, 4, 6, 0],
@@ -44,7 +44,7 @@ void main() async {
   // For native resources (e.g. allocating FFI memory pointers),
   // BatchSize.perIteration (batch size of 1) combined with teardown cleanly
   // frees the pointer after each iteration outside the measured timing loop.
-  criterion.bench<Pointer<Uint8>>(
+  criterion.benchState<Pointer<Uint8>>(
     'Native Memory Buffer (BatchSize.perIteration + teardown)',
     (Pointer<Uint8> ptr) {
       ptr.asTypedList(1024).fillRange(0, 1024, 42);
@@ -57,7 +57,7 @@ void main() async {
   // For large objects (e.g. allocating huge matrices or buffers),
   // BatchSize.largeInput (batch size of 1) allocates 1 state per batch
   // timer start/stop, preventing heap exhaustion on high iteration counts.
-  criterion.bench<LargeBuffer>(
+  criterion.benchState<LargeBuffer>(
     'Mutate Large Buffer (BatchSize.largeInput)',
     (buffer) => buffer.mutate(),
     setup: () => LargeBuffer(100000),
@@ -65,7 +65,7 @@ void main() async {
   );
 
   // Custom batch sizes can be configured using BatchSize.numIterations(n).
-  criterion.bench<int>(
+  criterion.benchState<int>(
     'Parse Integer (Custom Batch Size 50)',
     (val) => int.parse(val.toString()),
     setup: () => 42,

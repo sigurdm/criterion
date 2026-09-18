@@ -221,7 +221,7 @@ void main() {
         ),
       );
       var setupCount = 0;
-      c.variants<List<int>>(
+      c.variantsState<List<int>>(
         'sort',
         {'dart_sort': (list) => list.sort(), 'noop': (list) {}},
         setup: () {

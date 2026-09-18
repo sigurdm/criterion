@@ -7,7 +7,7 @@ void main() {
       final results = await criterion(
         'Param Test',
         (c) {
-          c.benchWith<void, int>(
+          c.benchWith<int>(
             'fib',
             [10, 20],
             (n) {
@@ -44,10 +44,10 @@ void main() {
       final results = await criterion(
         'Param Setup Test',
         (c) {
-          c.benchWith<List<int>, int>(
+          c.benchWithState<List<int>, int>(
             'sort',
             [5, 10],
-            (list) {
+            (list, _) {
               list.sort();
             },
             setup: (size) => List<int>.generate(size, (i) => size - i),
@@ -77,7 +77,7 @@ void main() {
       final results = await criterion(
         'Param JSON Test',
         (c) {
-          c.benchWith<void, String>('print', ['a', 'b'], (s) {
+          c.benchWith<String>('print', ['a', 'b'], (s) {
             // dummy
           }, samples: 5);
         },
@@ -137,7 +137,7 @@ void main() {
         );
 
         c.group('math', () {
-          c.benchWith<List<int>, int>(
+          c.benchWithState<List<int>, int>(
             'add',
             [2],
             (list, p) {
@@ -163,20 +163,10 @@ void main() {
       },
     );
 
-    test(
-      'benchWith throws ArgumentError when parameterless fn provided without setup',
-      () {
-        final c = Criterion();
-        expect(
-          () => c.benchWith<void, int>(
-            'invalid',
-            [1, 2],
-            () {}, // takes 0 arguments instead of 1
-          ),
-          throwsArgumentError,
-        );
-      },
-    );
+    // Passing a parameterless `fn` to benchWith is now a compile error: `fn`
+    // is typed as `FutureOr<void> Function(P)`. The corresponding runtime
+    // check lives in criterion_test.dart's
+    // 'Benchmark throws ArgumentError on signature mismatch'.
   });
 }
 

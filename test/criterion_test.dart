@@ -104,7 +104,7 @@ void main() {
     group('Batched Setups and BatchSize', () {
       test('default batchSize is smallInput when setup is provided', () {
         final c = Criterion();
-        c.bench<int>('with setup', (val) => val + 1, setup: () => 42);
+        c.benchState<int>('with setup', (val) => val + 1, setup: () => 42);
         expect(c.benchmarks.first.batchSize, equals(BatchSize.smallInput));
       });
 
@@ -114,32 +114,9 @@ void main() {
         expect(c.benchmarks.first.batchSize, equals(BatchSize.unbatched));
       });
 
-      test('throws ArgumentError if batchSize is passed without setup', () {
-        final c = Criterion();
-        expect(
-          () => c.bench(
-            'invalid batchSize',
-            () {},
-            batchSize: BatchSize.smallInput,
-          ),
-          throwsA(isA<ArgumentError>()),
-        );
-        expect(
-          () => c.variants('invalid variants batchSize', {
-            'v1': () {},
-          }, batchSize: BatchSize.largeInput),
-          throwsA(isA<ArgumentError>()),
-        );
-        expect(
-          () => c.benchWith<dynamic, int>(
-            'invalid benchWith batchSize',
-            [1, 2],
-            (val) {},
-            batchSize: BatchSize.numIterations(10),
-          ),
-          throwsA(isA<ArgumentError>()),
-        );
-      });
+      // Passing `batchSize` to bench/variants/benchWith (i.e. without setup)
+      // is now a compile error; the runtime check is covered by
+      // 'Benchmark constructor throws when batchSize passed without setup'.
 
       test(
         'BatchSize.numIterations throws ArgumentError on non-positive n',
@@ -177,7 +154,7 @@ void main() {
           ),
         );
 
-        c.bench<List<int>>(
+        c.benchState<List<int>>(
           'batched sort',
           (list) {
             runCount++;
@@ -200,33 +177,27 @@ void main() {
     });
 
     group('Function signature and setup validation', () {
-      test('bench throws ArgumentError on signature mismatch', () {
-        final c = Criterion();
+      test('Benchmark throws ArgumentError on signature mismatch', () {
+        // The Criterion APIs enforce these signatures statically now, so the
+        // runtime checks can only be reached through the Benchmark
+        // constructor, which takes untyped Functions.
         // setup provided, but fn takes 0 args
         expect(
-          () => c.bench('test', () {}, setup: () => 42),
+          () => Benchmark<int>('test', () {}, setup: () => 42),
           throwsArgumentError,
         );
         // setup provided, but noOp takes 0 args
         expect(
-          () => c.bench('test', (x) {}, setup: () => 42, noOp: () {}),
+          () => Benchmark<int>('test', (x) {}, setup: () => 42, noOp: () {}),
           throwsArgumentError,
         );
         // setup omitted, but fn takes 1 arg
-        expect(() => c.bench('test', (x) {}), throwsArgumentError);
+        expect(() => Benchmark<void>('test', (x) {}), throwsArgumentError);
         // setup omitted, but noOp takes 1 arg
-        expect(() => c.bench('test', () {}, noOp: (x) {}), throwsArgumentError);
-      });
-
-      test('variants throws ArgumentError on signature mismatch', () {
-        final c = Criterion();
-        // setup provided, but variant takes 0 args
         expect(
-          () => c.variants('v', {'v1': () {}}, setup: () => 42),
+          () => Benchmark<void>('test', () {}, noOp: (x) {}),
           throwsArgumentError,
         );
-        // setup omitted, but variant takes 1 arg
-        expect(() => c.variants('v', {'v1': (x) {}}), throwsArgumentError);
       });
 
       test(
@@ -234,22 +205,6 @@ void main() {
         () {
           expect(
             () => Benchmark('invalid', () {}, batchSize: BatchSize.smallInput),
-            throwsArgumentError,
-          );
-        },
-      );
-
-      test(
-        'benchWith throws ArgumentError when parameterless noOp provided without setup',
-        () {
-          final c = Criterion();
-          expect(
-            () => c.benchWith<dynamic, int>(
-              'invalid noOp',
-              [1, 2],
-              (p) {},
-              noOp: () {},
-            ),
             throwsArgumentError,
           );
         },
@@ -349,7 +304,7 @@ void main() {
               exportJson: false,
             ),
           );
-          c.bench<int>(
+          c.benchState<int>(
             'returns string with setup',
             (val) => 'result_$val',
             setup: () => 10,
@@ -459,7 +414,7 @@ void main() {
               for (var i = 0; i < 100; i++) {
                 x += i;
               }
-              return x;
+              blackhole(x);
             },
             samples: 5,
             warmupDuration: const Duration(milliseconds: 5),
@@ -494,7 +449,7 @@ void main() {
               for (var i = 0; i < 100; i++) {
                 x += i;
               }
-              return x;
+              blackhole(x);
             },
             samples: 5,
             warmupDuration: const Duration(milliseconds: 5),

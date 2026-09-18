@@ -15,7 +15,7 @@ void main() {
           exportJson: false,
         ),
       );
-      c.bench<int>(
+      c.benchState<int>(
         'setup_bench',
         (int state) {
           statesReceived.add(state);
@@ -56,7 +56,7 @@ void main() {
           exportJson: false,
         ),
       );
-      c.bench<int>(
+      c.benchState<int>(
         'async_setup_bench',
         (int state) async {
           await Future.delayed(const Duration(milliseconds: 1));
@@ -83,51 +83,9 @@ void main() {
     });
 
     test('teardown without setup throws ArgumentError', () {
-      final c = Criterion(
-        config: const CriterionConfig(
-          generateHtmlReport: false,
-          exportJson: false,
-        ),
-      );
-
-      expect(
-        () => c.bench('bad_bench', () {}, teardown: (_) {}),
-        throwsA(
-          isA<ArgumentError>().having(
-            (e) => e.message,
-            'message',
-            contains('teardown can only be provided when setup is provided'),
-          ),
-        ),
-      );
-
-      expect(
-        () => c.variants('bad_variants', {'v1': () {}}, teardown: (_) {}),
-        throwsA(
-          isA<ArgumentError>().having(
-            (e) => e.message,
-            'message',
-            contains('teardown can only be provided when setup is provided'),
-          ),
-        ),
-      );
-
-      expect(
-        () => c.benchWith<dynamic, int>(
-          'bad_benchWith',
-          [1, 2],
-          (p) {},
-          teardown: (_) {},
-        ),
-        throwsA(
-          isA<ArgumentError>().having(
-            (e) => e.message,
-            'message',
-            contains('teardown can only be provided when setup is provided'),
-          ),
-        ),
-      );
-
+      // The Criterion-level APIs (bench/variants/benchWith) no longer expose
+      // `teardown` without `setup`, so this can only be triggered by
+      // constructing a Benchmark directly.
       expect(
         () => Benchmark('bad_benchmark_ctor', () {}, teardown: (_) {}),
         throwsA(
@@ -154,7 +112,7 @@ void main() {
               exportJson: false,
             ),
           );
-          c.bench<int>(
+          c.benchState<int>(
             'teardown_counter_$mode',
             (state) {
               // Small busy delay so calibrate targets a small iteration count (e.g. 10-50 iterations)
@@ -186,7 +144,7 @@ void main() {
       timeout: const Timeout(Duration(seconds: 60)),
     );
 
-    test('teardown works with bench, variants, and benchWith', () async {
+    test('teardown works with the stateful APIs', () async {
       // bench
       final benchTeardowns = <String>[];
       // variants
@@ -201,7 +159,7 @@ void main() {
         ),
       );
 
-      c.bench<String>(
+      c.benchState<String>(
         'bench_single',
         (state) {},
         setup: () => 'bench_state',
@@ -210,7 +168,7 @@ void main() {
         warmupDuration: const Duration(milliseconds: 5),
       );
 
-      c.variants<String>(
+      c.variantsState<String>(
         'variant_group',
         {'v1': (state) {}, 'v2': (state) {}},
         setup: () => 'variant_state',
@@ -219,7 +177,7 @@ void main() {
         warmupDuration: const Duration(milliseconds: 5),
       );
 
-      c.benchWith<String, int>(
+      c.benchWithState<String, int>(
         'param_group',
         [10, 20],
         (String state, int param) {},
@@ -253,7 +211,7 @@ void main() {
           ),
         );
 
-        c.bench<int>(
+        c.benchState<int>(
           'async_teardown_time_exclusion',
           (state) {
             // Fast operation (nanoseconds)

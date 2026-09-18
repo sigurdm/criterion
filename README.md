@@ -87,16 +87,16 @@ c.bench('async operation', () async {
 ```
 
 ### State Isolation (Setup)
-To benchmark operations that modify state (like in-place sorting) without measuring the setup time, use `setup`:
+To benchmark operations that consume or modify their input (like in-place sorting) without measuring the setup time, use `benchState`:
 
 ```dart
-c.bench<List<int>>(
+c.benchState<List<int>>(
   'in-place sort',
   (list) => list.sort(),
   setup: () => List<int>.generate(1000, (i) => 1000 - i),
 );
 ```
-*Note: The benchmark function must accept the state returned by `setup`.*
+`setup` runs outside the measured region and produces one fresh state per iteration; the benchmark function receives it. The state type is inferred from `setup`, so a mismatched benchmark function is a compile error.
 
 ### Batched Setups (`batchSize`)
 When a benchmark uses `setup` to generate large objects or buffers, pre-allocating all benchmark iterations in memory simultaneously can cause RAM exhaustion ($O(\text{iterations})$ memory) and CPU cache eviction.
@@ -106,7 +106,7 @@ Criterion supports **Batched Setups** via the optional `batchSize` parameter (de
 ```dart
 // For large allocating setups (e.g. huge buffers or FFI matrices),
 // BatchSize.largeInput allocates 1 state per batch start/stop.
-c.bench<List<double>>(
+c.benchState<List<double>>(
   'mutate large matrix',
   (matrix) => mutate(matrix),
   setup: () => List<double>.filled(100000, 1.0),
@@ -136,10 +136,19 @@ c.bench(
 Compare multiple implementations of the same task:
 
 ```dart
-c.variants<String>('Integer Parsing', {
-  'tryParse': (s) => int.tryParse(s),
-  'parse': (s) => int.parse(s),
-}, setup: () => '123');
+c.variants('Integer Parsing', {
+  'tryParse': () => int.tryParse('123'),
+  'parse': () => int.parse('123'),
+});
+```
+
+Use `variantsState` when the variants need freshly constructed input:
+
+```dart
+c.variantsState<List<int>>('Sorting', {
+  'sort': (list) => list.sort(),
+  'sorted copy': (list) => List.of(list)..sort(),
+}, setup: () => List<int>.generate(1000, (i) => 1000 - i));
 ```
 This prints a comparison table using the first variant as the baseline and adds a comparison chart to the HTML report.
 
@@ -148,10 +157,21 @@ This prints a comparison table using the first variant as the baseline and adds 
 Run the same benchmark over a range of inputs (e.g., to verify algorithmic complexity):
 
 ```dart
-c.benchWith<void, int>(
+c.benchWith<int>(
   'Fibonacci Parameterized',
   [5, 10, 15, 20],
   (n) => fib(n),
+);
+```
+
+Use `benchWithState` when each parameter also needs freshly constructed state; the benchmark function then receives both:
+
+```dart
+c.benchWithState<List<int>, int>(
+  'Sort by size',
+  [100, 1000, 10000],
+  (list, size) => list.sort(),
+  setup: (size) => List<int>.generate(size, (i) => size - i),
 );
 ```
 

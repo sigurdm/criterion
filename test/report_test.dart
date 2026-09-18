@@ -242,7 +242,7 @@ void main() {
       );
 
       await criterion('Param Test Suite', (c) {
-        c.benchWith<void, int>(
+        c.benchWith<int>(
           'fib',
           [10, 20],
           (n) {},
