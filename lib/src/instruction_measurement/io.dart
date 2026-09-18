@@ -19,13 +19,19 @@ import 'package:ffi/ffi.dart';
 import '../batch_size.dart';
 import '../result.dart';
 
-// Linux x86_64 syscall number for perf_event_open
-const int _sysPerfEventOpen = 298;
+// Architecture-specific syscall number for perf_event_open
+final int? _sysPerfEventOpen = switch (Abi.current()) {
+  Abi.linuxX64 => 298,
+  Abi.linuxArm64 || Abi.linuxRiscv64 => 241,
+  Abi.linuxArm => 364,
+  Abi.linuxIA32 => 336,
+  _ => null,
+};
 
 // ioctl constants
-const int _perfEventIocEnable = 0x20002400;
-const int _perfEventIocDisable = 0x20002401;
-const int _perfEventIocReset = 0x20002403;
+const int _perfEventIocEnable = 0x2400;
+const int _perfEventIocDisable = 0x2401;
+const int _perfEventIocReset = 0x2403;
 
 // libc mapping
 final DynamicLibrary _libc = DynamicLibrary.process();
@@ -90,13 +96,19 @@ final _CloseDart? _close = () {
 /// Helper to perform hardware CPU instruction measurements using Linux perf events.
 final class InstructionMeasurer {
   /// Whether hardware instruction counting is supported on this platform.
-  static bool get isSupported {
+  static final bool isSupported = _checkSupported();
+
+  static bool _checkSupported() {
     if (!Platform.isLinux) return false;
+    final sysOpen = _sysPerfEventOpen;
+    if (sysOpen == null) return false;
     if (_syscall == null || _ioctl == null || _read == null || _close == null) {
       return false;
     }
 
     final syscallFn = _syscall!;
+    final ioctlFn = _ioctl!;
+    final readFn = _read!;
     final closeFn = _close!;
 
     final attrSize = 120;
@@ -113,14 +125,36 @@ final class InstructionMeasurer {
     (attr + 40).cast<Uint64>().value = 97;
 
     // Open the event (pid = 0 for calling process, cpu = -1 for any CPU)
-    final fd = syscallFn(_sysPerfEventOpen, attr.cast<Void>(), 0, -1, -1, 0);
+    final fd = syscallFn(sysOpen, attr.cast<Void>(), 0, -1, -1, 0);
     calloc.free(attr);
 
-    if (fd >= 0) {
-      closeFn(fd);
-      return true;
+    if (fd < 0) {
+      return false;
     }
-    return false;
+
+    try {
+      if (ioctlFn(fd, _perfEventIocReset, 0) != 0) return false;
+      if (ioctlFn(fd, _perfEventIocEnable, 0) != 0) return false;
+
+      var s = 0;
+      for (var i = 0; i < 1000; i++) {
+        s += i;
+      }
+      if (s == 0) return false;
+
+      ioctlFn(fd, _perfEventIocDisable, 0);
+
+      final counterBuf = calloc<Uint64>();
+      final bytesRead = readFn(fd, counterBuf.cast<Void>(), 8);
+      final instructions = bytesRead == 8 ? counterBuf.value : null;
+      calloc.free(counterBuf);
+
+      return instructions != null && instructions > 0;
+    } catch (_) {
+      return false;
+    } finally {
+      closeFn(fd);
+    }
   }
 
   /// Measures CPU instructions for [fn] over [iterations] runs.
@@ -153,7 +187,7 @@ final class InstructionMeasurer {
     (attr + 40).cast<Uint64>().value = 97;
 
     // Open the event (pid = 0 for calling process, cpu = -1 for any CPU)
-    final fd = syscallFn(_sysPerfEventOpen, attr.cast<Void>(), 0, -1, -1, 0);
+    final fd = syscallFn(_sysPerfEventOpen!, attr.cast<Void>(), 0, -1, -1, 0);
     calloc.free(attr);
 
     if (fd < 0) {

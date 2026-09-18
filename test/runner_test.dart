@@ -258,6 +258,135 @@ void main() async {
       expect(benchmarkResult['platform'], equals('js'));
     });
 
+    test(
+      'runs multi-suite benchmark with --json flag and outputs all results',
+      () async {
+        final multiSuiteFile = File('test/temp_multi_suite_bench.dart');
+        try {
+          multiSuiteFile.writeAsStringSync('''
+import 'package:criterion/criterion.dart';
+
+void main() async {
+  await criterion(
+    'Suite1',
+    (c) {
+      c.bench('bench1', () {}, samples: 5, warmupDuration: Duration(milliseconds: 10));
+    },
+    config: CriterionConfig(exportJson: false, generateHtmlReport: false),
+  );
+  await criterion(
+    'Suite2',
+    (c) {
+      c.bench('bench2', () {}, samples: 5, warmupDuration: Duration(milliseconds: 10));
+    },
+    config: CriterionConfig(exportJson: false, generateHtmlReport: false),
+  );
+}
+''');
+
+          final runDart = Platform.resolvedExecutable;
+          final runScriptPath = 'bin/run.dart';
+
+          final result = await Process.run(runDart, [
+            runScriptPath,
+            '-f',
+            'jit',
+            '--json',
+            multiSuiteFile.path,
+          ]);
+
+          expect(
+            result.exitCode,
+            equals(0),
+            reason: 'Stdout: ${result.stdout}\nStderr: ${result.stderr}',
+          );
+
+          final stdoutStr = result.stdout as String;
+          final jsonStart = stdoutStr.indexOf(RegExp(r'[\[\{]'));
+          expect(jsonStart, isNot(-1));
+
+          final jsonStr = stdoutStr.substring(jsonStart).trim();
+          final jsonContent = jsonDecode(jsonStr) as List;
+          expect(jsonContent.length, equals(2));
+
+          final names = jsonContent.map((r) => r['name']).toList();
+          expect(names, containsAll(['bench1', 'bench2']));
+        } finally {
+          if (multiSuiteFile.existsSync()) {
+            multiSuiteFile.deleteSync();
+          }
+        }
+      },
+    );
+
+    test(
+      'aggregates results across multiple flavors when not in json mode',
+      () async {
+        final multiFlavorBenchFile = File('test/temp_multi_flavor_bench.dart');
+        final defaultReportDir = Directory('benchmark/report');
+        if (defaultReportDir.existsSync()) {
+          defaultReportDir.deleteSync(recursive: true);
+        }
+
+        try {
+          multiFlavorBenchFile.writeAsStringSync('''
+import 'package:criterion/criterion.dart';
+
+void main() async {
+  await criterion(
+    'FlavorSuite',
+    (c) {
+      c.bench('flavor_bench', () {}, samples: 5, warmupDuration: Duration(milliseconds: 10));
+    },
+    config: CriterionConfig(
+      reportDir: 'benchmark/report',
+      exportJson: true,
+      generateHtmlReport: true,
+    ),
+  );
+}
+''');
+
+          final runDart = Platform.resolvedExecutable;
+          final runScriptPath = 'bin/run.dart';
+
+          final result = await Process.run(runDart, [
+            runScriptPath,
+            '-f',
+            'jit',
+            '-f',
+            'aot',
+            multiFlavorBenchFile.path,
+          ]);
+
+          expect(
+            result.exitCode,
+            equals(0),
+            reason: 'Stdout: ${result.stdout}\nStderr: ${result.stderr}',
+          );
+
+          final resultsJsonFile = File('benchmark/report/results.json');
+          final indexHtmlFile = File('benchmark/report/index.html');
+          expect(resultsJsonFile.existsSync(), isTrue);
+          expect(indexHtmlFile.existsSync(), isTrue);
+
+          final jsonContent =
+              jsonDecode(resultsJsonFile.readAsStringSync()) as List;
+          expect(jsonContent.length, equals(2));
+
+          final platforms = jsonContent.map((r) => r['platform']).toList();
+          expect(platforms, containsAll(['jit', 'aot']));
+        } finally {
+          if (multiFlavorBenchFile.existsSync()) {
+            multiFlavorBenchFile.deleteSync();
+          }
+          if (defaultReportDir.existsSync()) {
+            defaultReportDir.deleteSync(recursive: true);
+          }
+        }
+      },
+    );
+
     test('runs benchmark in WASM flavor if node is available', () async {
       if (!await _isNodeAvailable()) {
         print('Skipping WASM runner test: node is not available');

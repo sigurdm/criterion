@@ -19,12 +19,18 @@ void main() {
   group('Instruction Measurement', () {
     test('measure works or returns null depending on support', () async {
       final result = await InstructionMeasurer.measure(
-        fn: () {},
+        fn: () {
+          var s = 0;
+          for (var i = 0; i < 1000; i++) {
+            s += i;
+          }
+          if (s == 0) throw StateError('invalid s');
+        },
         iterations: 100,
       );
       if (InstructionMeasurer.isSupported) {
         expect(result, isNotNull);
-        expect(result!.instructionsPerIteration, greaterThanOrEqualTo(0.0));
+        expect(result!.instructionsPerIteration, greaterThan(0.0));
       } else {
         expect(result, isNull);
       }

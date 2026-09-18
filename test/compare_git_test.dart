@@ -43,8 +43,8 @@ void main() async {
     },
     config: CriterionConfig(
       generateHtmlReport: false,
-      exportJson: true,
-      reportDir: 'benchmark/report',
+      exportJson: false,
+      reportDir: 'custom_report_dir',
     ),
   );
 }
@@ -81,6 +81,20 @@ void main() async {
       expect(result.stdout, contains('Time (after)'));
       expect(result.stdout, contains('Significant?'));
       expect(result.stdout, contains('dummy_bench'));
+    });
+    test('cleans up worktree on invalid ref failure', () async {
+      final dartExe = Platform.resolvedExecutable;
+      final compareGitScript = 'bin/compare_git.dart';
+
+      final result = await Process.run(dartExe, [
+        compareGitScript,
+        'HEAD',
+        'invalid_nonexistent_ref_xyz',
+        dummyFile.path,
+      ]);
+
+      expect(result.exitCode, isNot(0));
+      expect(result.stdout, contains('Cleaning up worktree at'));
     });
   });
 }

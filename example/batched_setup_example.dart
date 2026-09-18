@@ -32,7 +32,7 @@ void main() async {
   final criterion = Criterion();
 
   // By default, when a setup callback is provided, Criterion uses
-  // BatchSize.smallInput (batches of 100) to keep memory usage bounded.
+  // BatchSize.smallInput (batches of 1000) to keep memory usage bounded.
   criterion.bench<List<int>>(
     'Sort List (Default Batched Setup)',
     (list) => list.sort(),

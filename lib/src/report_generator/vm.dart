@@ -29,6 +29,7 @@ final class ReportGenerator {
   Future<void> generate(
     List<BenchmarkResult> results, {
     List<BenchmarkResult>? history,
+    String? suiteName,
   }) async {
     if (!config.exportJson && !config.generateHtmlReport) {
       return;
@@ -44,7 +45,12 @@ final class ReportGenerator {
     }
 
     if (config.generateHtmlReport) {
-      await _generateHtml(results, directory, history: history);
+      await _generateHtml(
+        results,
+        directory,
+        history: history,
+        suiteName: suiteName,
+      );
     }
   }
 
@@ -64,9 +70,14 @@ final class ReportGenerator {
     List<BenchmarkResult> results,
     Directory directory, {
     List<BenchmarkResult>? history,
+    String? suiteName,
   }) async {
     final file = File('${directory.path}/index.html');
-    final htmlContent = _buildHtml(results, history: history);
+    final htmlContent = _buildHtml(
+      results,
+      history: history,
+      suiteName: suiteName,
+    );
     await file.writeAsString(htmlContent);
     print('Generated HTML report at: ${file.path}');
   }
@@ -74,11 +85,17 @@ final class ReportGenerator {
   String _buildHtml(
     List<BenchmarkResult> results, {
     List<BenchmarkResult>? history,
+    String? suiteName,
   }) {
-    final jsonResults = jsonEncode(results.map((r) => r.toJson()).toList());
+    final pageTitle = suiteName != null
+        ? const HtmlEscape().convert(suiteName)
+        : 'Criterion Benchmark Report';
+    final jsonResults = jsonEncode(
+      results.map((r) => r.toJson()).toList(),
+    ).replaceAll('</', r'<\/');
     final jsonHistory = jsonEncode(
       (history ?? []).map((r) => r.toJson()).toList(),
-    );
+    ).replaceAll('</', r'<\/');
 
     return '''
 <!DOCTYPE html>
@@ -86,9 +103,9 @@ final class ReportGenerator {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Criterion Benchmark Report</title>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@sgratzl/chartjs-chart-boxplot"></script>
+    <title>$pageTitle</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@sgratzl/chartjs-chart-boxplot@4.4.0/build/index.umd.min.js"></script>
     <style>
         body {
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
@@ -189,7 +206,7 @@ final class ReportGenerator {
 <body>
     <div class="container">
         <header>
-            <h1>Criterion Benchmark Report</h1>
+            <h1>$pageTitle</h1>
             <p>Generated on ${DateTime.now().toLocal().toString()}</p>
         </header>
         <div class="grid">
@@ -359,6 +376,15 @@ final class ReportGenerator {
         console.log("Loaded history:", historyData);
 
         // Helper functions
+        function escapeHtml(str) {
+            if (str === null || str === undefined) return '';
+            return String(str)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
         function formatDuration(ns) {
             if (ns < 1.0) return (ns * 1000).toFixed(2) + ' ps';
             if (ns < 1000.0) return ns.toFixed(2) + ' ns';
@@ -371,9 +397,9 @@ final class ReportGenerator {
         }
 
         function formatBytes(bytes) {
-            if (bytes < 1024) return bytes.toFixed(1) + ' B';
+            if (Math.abs(bytes) < 1024) return bytes.toFixed(1) + ' B';
             const kb = bytes / 1024;
-            if (kb < 1024) return kb.toFixed(1) + ' KB';
+            if (Math.abs(kb) < 1024) return kb.toFixed(1) + ' KB';
             const mb = kb / 1024;
             return mb.toFixed(1) + ' MB';
         }
@@ -480,10 +506,13 @@ final class ReportGenerator {
         const variantGroups = {};
         data.forEach(bench => {
             if (bench.variantGroup) {
-                if (!variantGroups[bench.variantGroup]) {
-                    variantGroups[bench.variantGroup] = [];
+                const key = (bench.variantName && bench.name.endsWith(' / ' + bench.variantName))
+                    ? bench.name.slice(0, bench.name.length - (' / ' + bench.variantName).length)
+                    : bench.variantGroup;
+                if (!variantGroups[key]) {
+                    variantGroups[key] = [];
                 }
-                variantGroups[bench.variantGroup].push(bench);
+                variantGroups[key].push(bench);
             }
         });
         const hasVariants = Object.keys(variantGroups).length > 0;
@@ -506,8 +535,8 @@ final class ReportGenerator {
             const div = document.createElement('div');
             div.className = 'checkbox-item';
             div.innerHTML = `
-                <input type="checkbox" id="bench-\${index}" value="\${bench.name}">
-                <label for="bench-\${index}">\${bench.name}</label>
+                <input type="checkbox" id="bench-\${index}" value="\${escapeHtml(bench.name)}">
+                <label for="bench-\${index}">\${escapeHtml(bench.name)}</label>
             `;
             benchmarkList.appendChild(div);
             
@@ -518,7 +547,7 @@ final class ReportGenerator {
                     if (e.target.checked) {
                         selectedBenchmarks.push(bench);
                     } else {
-                        selectedBenchmarks = selectedBenchmarks.filter(b => b.name !== bench.name);
+                        selectedBenchmarks = selectedBenchmarks.filter(b => b !== bench);
                     }
                     updateComparisonView();
                 } else {
@@ -775,9 +804,9 @@ final class ReportGenerator {
             if (selectParam) {
                 const indices = selectParam.split(',').map(s => s.trim());
                 indices.forEach(idxOrName => {
-                    let index = parseInt(idxOrName, 10);
-                    if (isNaN(index)) {
-                        index = data.findIndex(b => b.name === idxOrName);
+                    let index = data.findIndex(b => b.name === idxOrName);
+                    if (index === -1 && /^\\d+\$/.test(idxOrName)) {
+                        index = parseInt(idxOrName, 10);
                     }
                     if (index >= 0 && index < data.length) {
                         document.getElementById(`bench-\${index}`).checked = true;
@@ -787,9 +816,9 @@ final class ReportGenerator {
                 updateComparisonView();
             }
         } else if (benchParam) {
-            let index = parseInt(benchParam, 10);
-            if (isNaN(index)) {
-                index = data.findIndex(b => b.name === benchParam);
+            let index = data.findIndex(b => b.name === benchParam);
+            if (index === -1 && /^\\d+\$/.test(benchParam)) {
+                index = parseInt(benchParam, 10);
             }
             if (index >= 0 && index < data.length) {
                 document.getElementById(`bench-\${index}`).checked = true;
@@ -970,8 +999,8 @@ final class ReportGenerator {
                     top10.forEach(alloc => {
                         const tr = document.createElement('tr');
                         tr.innerHTML = `
-                            <td>\${alloc.className}</td>
-                            <td style="font-size: 0.85em; color: #666; word-break: break-all;">\${alloc.libraryUri}</td>
+                            <td>\${escapeHtml(alloc.className)}</td>
+                            <td style="font-size: 0.85em; color: #666; word-break: break-all;">\${escapeHtml(alloc.libraryUri)}</td>
                             <td class="metric-value">\${formatBytes(alloc.bytes)}</td>
                             <td class="metric-value">\${formatCount(alloc.instances)}</td>
                         `;
@@ -1005,8 +1034,8 @@ final class ReportGenerator {
                         const total = primary.cpuProfile.sampleCount;
                         const pct = total > 0 ? (func.exclusiveTicks / total) * 100 : 0.0;
                         tr.innerHTML = `
-                            <td>\${func.name}</td>
-                            <td style="font-size: 0.85em; color: #666; word-break: break-all;">\${func.resolvedUrl}</td>
+                            <td>\${escapeHtml(func.name)}</td>
+                            <td style="font-size: 0.85em; color: #666; word-break: break-all;">\${escapeHtml(func.resolvedUrl)}</td>
                             <td class="metric-value">\${func.exclusiveTicks}</td>
                             <td class="metric-value">\${pct.toFixed(1)}%</td>
                         `;
@@ -1227,7 +1256,7 @@ final class ReportGenerator {
                 const card = document.createElement('div');
                 card.className = 'card';
                 card.innerHTML = `
-                    <h3>\${groupName}</h3>
+                    <h3>\${escapeHtml(groupName)}</h3>
                     <div class="chart-container">
                         <canvas id="variant-chart-\${groupIndex}"></canvas>
                     </div>
@@ -1276,7 +1305,7 @@ final class ReportGenerator {
                 const card = document.createElement('div');
                 card.className = 'card';
                 card.innerHTML = `
-                    <h3>\${groupName}</h3>
+                    <h3>\${escapeHtml(groupName)}</h3>
                     <div class="chart-container">
                         <canvas id="parameter-chart-\${groupIndex}"></canvas>
                     </div>
@@ -1348,7 +1377,7 @@ final class ReportGenerator {
                 const card = document.createElement('div');
                 card.className = 'card';
                 card.innerHTML = `
-                    <h3>\${groupName}</h3>
+                    <h3>\${escapeHtml(groupName)}</h3>
                     <div class="chart-container">
                         <canvas id="history-chart-\${chartIdx}"></canvas>
                     </div>

@@ -7,9 +7,10 @@
 pubspec.lock
 
 # Benchmark reports
-benchmark/report/
+benchmark/report*/
 benchmark/screenshots_report/
 benchmark/criterion_history.json
+benchmark/*_solve_benchmark.dart
 
 # Test coverage
 coverage/

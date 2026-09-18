@@ -63,7 +63,11 @@ void main(List<String> arguments) async {
   // Group by benchmark name and platform
   final groups = <String, List<BenchmarkResult>>{};
   for (final r in history) {
-    final key = r.platform.isNotEmpty ? '${r.name} (${r.platform})' : r.name;
+    final baseName =
+        (r.parameterValue != null && !r.name.endsWith(' / ${r.parameterValue}'))
+        ? '${r.name} / ${r.parameterValue}'
+        : r.name;
+    final key = r.platform.isNotEmpty ? '$baseName (${r.platform})' : baseName;
     groups.putIfAbsent(key, () => []).add(r);
   }
 

@@ -183,7 +183,9 @@ final class MeasurementResult {
     final cpuProfileJson = json["cpuProfile"] as Map<String, dynamic>?;
 
     return MeasurementResult(
-      sampleTimes: (json["sampleTimes"] as List).cast<double>(),
+      sampleTimes: (json["sampleTimes"] as List)
+          .map((e) => (e as num).toDouble())
+          .toList(),
       mean: (json["mean"] as num).toDouble(),
       median: (json["median"] as num).toDouble(),
       stdDev: (json["stdDev"] as num).toDouble(),

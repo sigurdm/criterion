@@ -1,7 +1,7 @@
 name: criterion
-description: A starting point for Dart libraries or applications.
+description: A statistics-driven benchmarking library for Dart, inspired by Rust's criterion.rs.
 version: 1.0.0
-# repository: https://github.com/my_org/my_repo
+repository: https://github.com/sigurdm/criterion
 
 environment:
   sdk: ^3.12.0
@@ -18,3 +18,8 @@ dev_dependencies:
   lints: ^6.0.0
   test: ^1.25.6
   puppeteer: ^3.0.0
+executables:
+  run: run
+  compare: compare
+  compare_git: compare_git
+  graph: graph

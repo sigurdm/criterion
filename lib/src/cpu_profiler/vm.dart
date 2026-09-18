@@ -19,6 +19,7 @@ import 'dart:isolate' as dart_isolate;
 import 'package:vm_service/vm_service.dart';
 import 'package:vm_service/vm_service_io.dart';
 import '../batch_size.dart';
+import '../blackhole.dart';
 import '../result.dart';
 
 /// Helper to collect CPU profiles using the VM Service.
@@ -59,37 +60,103 @@ final class CpuProfiler {
       final mode =
           batchSize ??
           (setup != null ? BatchSize.smallInput : BatchSize.unbatched);
-      final startTime = (await service.getVMTimelineMicros()).timestamp!;
+      final intervals = <(int, int)>[];
+      final int startTime;
+      final int endTime;
 
-      var remaining = iterations;
-      while (remaining > 0) {
-        final batch = mode.batchSizeFor(remaining);
+      if (setup != null && iterations <= mode.batchSizeFor(iterations)) {
+        final batch = iterations;
         final states = <dynamic>[];
-        if (setup != null) {
-          for (var i = 0; i < batch; i++) {
-            final state = setup();
-            states.add(state is Future ? await state : state);
-          }
-        }
         for (var i = 0; i < batch; i++) {
-          if (setup != null) {
-            final r = fn(states[i]);
-            if (r is Future) await r;
-          } else {
-            final r = fn();
-            if (r is Future) await r;
-          }
+          final state = setup();
+          states.add(state is Future ? await state : state);
         }
-        remaining -= batch;
+        startTime = (await service.getVMTimelineMicros()).timestamp!;
+        for (var i = 0; i < batch; i++) {
+          final r = fn(states[i]);
+          final res = r is Future ? await r : r;
+          Blackhole.sink = res;
+        }
+        endTime = (await service.getVMTimelineMicros()).timestamp!;
+      } else {
+        startTime = (await service.getVMTimelineMicros()).timestamp!;
+        var remaining = iterations;
+        while (remaining > 0) {
+          final batch = mode.batchSizeFor(remaining);
+          final states = <dynamic>[];
+          if (setup != null) {
+            for (var i = 0; i < batch; i++) {
+              final state = setup();
+              states.add(state is Future ? await state : state);
+            }
+          }
+
+          if (setup != null) {
+            final batchStart = developer.Timeline.now;
+            for (var i = 0; i < batch; i++) {
+              final r = fn(states[i]);
+              final res = r is Future ? await r : r;
+              Blackhole.sink = res;
+            }
+            final batchEnd = developer.Timeline.now;
+            intervals.add((batchStart, batchEnd));
+          } else {
+            for (var i = 0; i < batch; i++) {
+              final r = fn();
+              final res = r is Future ? await r : r;
+              Blackhole.sink = res;
+            }
+          }
+          remaining -= batch;
+        }
+        endTime = (await service.getVMTimelineMicros()).timestamp!;
       }
 
-      final endTime = (await service.getVMTimelineMicros()).timestamp!;
-
+      final timeSpan = endTime - startTime;
       final cpuSamples = await service.getCpuSamples(
         isolateId,
         startTime,
-        endTime - startTime,
+        timeSpan < 0 ? 0 : timeSpan,
       );
+
+      if (intervals.isNotEmpty && cpuSamples.samples != null) {
+        final filteredSamples = cpuSamples.samples!.where((sample) {
+          final ts = sample.timestamp;
+          if (ts == null) return false;
+          for (final interval in intervals) {
+            if (ts >= interval.$1 && ts <= interval.$2) {
+              return true;
+            }
+          }
+          return false;
+        }).toList();
+
+        for (final f in cpuSamples.functions ?? <ProfileFunction>[]) {
+          f.exclusiveTicks = 0;
+          f.inclusiveTicks = 0;
+        }
+
+        final numFunctions = cpuSamples.functions?.length ?? 0;
+        for (final sample in filteredSamples) {
+          final stack = sample.stack;
+          if (stack != null && stack.isNotEmpty) {
+            final top = stack.first;
+            if (top >= 0 && top < numFunctions) {
+              final f = cpuSamples.functions![top];
+              f.exclusiveTicks = (f.exclusiveTicks ?? 0) + 1;
+            }
+            for (final idx in stack.toSet()) {
+              if (idx >= 0 && idx < numFunctions) {
+                final f = cpuSamples.functions![idx];
+                f.inclusiveTicks = (f.inclusiveTicks ?? 0) + 1;
+              }
+            }
+          }
+        }
+
+        cpuSamples.samples = filteredSamples;
+        cpuSamples.sampleCount = filteredSamples.length;
+      }
 
       if (exportPath != null) {
         try {

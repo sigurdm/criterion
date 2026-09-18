@@ -1,3 +1,5 @@
+import "dart:convert";
+
 import "../config.dart";
 import "../result.dart";
 
@@ -9,11 +11,16 @@ final class ReportGenerator {
   /// Creates a new [ReportGenerator].
   ReportGenerator(this.config);
 
-  /// No-op on web platforms.
+  /// No-op on web platforms unless [CRITERION_EMIT_RESULTS_MARKER] is enabled.
   Future<void> generate(
     List<BenchmarkResult> results, {
     List<BenchmarkResult>? history,
+    String? suiteName,
   }) async {
-    // Do nothing.
+    if (const bool.fromEnvironment('CRITERION_EMIT_RESULTS_MARKER')) {
+      print(
+        '__CRITERION_RESULTS_JSON__:${jsonEncode(results.map((r) => r.toJson()).toList())}',
+      );
+    }
   }
 }

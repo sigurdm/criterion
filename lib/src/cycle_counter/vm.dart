@@ -24,13 +24,12 @@ final class CycleCounter {
   static DynamicLibrary? _dylib;
   static GetCycles? _getCycles;
   static bool _supported = false;
-  static bool _initialized = false;
+  static Future<void>? _initFuture;
 
   /// Initializes the CPU cycle counter if native compiler toolchains exist.
-  static Future<void> init() async {
-    if (_initialized) return;
-    _initialized = true;
+  static Future<void> init() => _initFuture ??= _doInit();
 
+  static Future<void> _doInit() async {
     final libPath = await CycleCounterCompiler.compile();
     if (libPath != null) {
       try {
@@ -39,7 +38,7 @@ final class CycleCounter {
             .lookup<NativeFunction<GetCyclesFunc>>('get_cycles')
             .asFunction<GetCycles>();
         // Test read
-        final c = read();
+        final c = _getCycles!();
         _supported = c > 0;
       } catch (_) {
         _supported = false;
@@ -65,6 +64,7 @@ final class CycleCounter {
     Function? setup,
     BatchSize? batchSize,
   }) async {
+    await init();
     if (!_supported || _getCycles == null) return null;
 
     final mode =
@@ -98,10 +98,7 @@ final class CycleCounter {
       final end = _getCycles!();
 
       final diff = end - start;
-      // Handle rare negative diff due to signed representation if it wrapped.
-      final actualDiff = diff < 0
-          ? (BigInt.from(end) - BigInt.from(start)).toUnsigned(64).toDouble()
-          : diff.toDouble();
+      final actualDiff = diff < 0 ? 0.0 : diff.toDouble();
 
       totalDiff += actualDiff;
       remaining -= batch;

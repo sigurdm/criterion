@@ -238,6 +238,22 @@ void main() {
           );
         },
       );
+
+      test(
+        'benchWith throws ArgumentError when parameterless noOp provided without setup',
+        () {
+          final c = Criterion();
+          expect(
+            () => c.benchWith<dynamic, int>(
+              'invalid noOp',
+              [1, 2],
+              (p) {},
+              noOp: () {},
+            ),
+            throwsArgumentError,
+          );
+        },
+      );
     });
 
     group('Formatters and utilities', () {
@@ -280,6 +296,147 @@ void main() {
         expect(prints.any((l) => l.contains('throughput:')), isTrue);
         expect(prints.any((l) => l.contains('/s')), isTrue);
       });
+    });
+
+    group('Harness execution, calibration, and Blackhole integration', () {
+      test(
+        'Criterion stores suiteName and criterion helper passes it',
+        () async {
+          final c = Criterion(suiteName: 'My Custom Suite');
+          expect(c.suiteName, equals('My Custom Suite'));
+
+          await criterion(
+            'Suite In Helper',
+            (suiteCriterion) {
+              expect(suiteCriterion.suiteName, equals('Suite In Helper'));
+            },
+            config: const CriterionConfig(
+              generateHtmlReport: false,
+              exportJson: false,
+            ),
+          );
+        },
+      );
+
+      test(
+        'benchmark return values are implicitly consumed by Blackhole.sink',
+        () async {
+          final c = Criterion(
+            config: const CriterionConfig(
+              useKbssd: false,
+              generateHtmlReport: false,
+              exportJson: false,
+            ),
+          );
+          c.bench(
+            'returns int',
+            () => 424242,
+            samples: 5,
+            warmupDuration: const Duration(milliseconds: 2),
+          );
+          await c.run();
+          expect(Blackhole.sink, equals(424242));
+        },
+      );
+
+      test(
+        'typed benchmark with setup return values are consumed by Blackhole.sink',
+        () async {
+          final c = Criterion(
+            config: const CriterionConfig(
+              useKbssd: false,
+              generateHtmlReport: false,
+              exportJson: false,
+            ),
+          );
+          c.bench<int>(
+            'returns string with setup',
+            (val) => 'result_$val',
+            setup: () => 10,
+            samples: 5,
+            warmupDuration: const Duration(milliseconds: 2),
+          );
+          await c.run();
+          expect(Blackhole.sink, equals('result_10'));
+        },
+      );
+
+      test(
+        'direct Benchmark.run calls Blackhole.preventDCE and consumes return value',
+        () async {
+          final b = Benchmark(
+            'direct bench',
+            () => 999,
+            samples: 5,
+            warmupDuration: const Duration(milliseconds: 2),
+            config: const CriterionConfig(
+              generateHtmlReport: false,
+              exportJson: false,
+            ),
+          );
+          final res = await b.run();
+          expect(res.name, equals('direct bench'));
+          expect(Blackhole.sink, equals(999));
+        },
+      );
+
+      test(
+        'KBSSD runs warm-up before calibration when warmupDuration > zero',
+        () async {
+          var callCount = 0;
+          final b = Benchmark(
+            'kbssd warmup test',
+            () {
+              callCount++;
+            },
+            samples: 5,
+            warmupDuration: const Duration(milliseconds: 10),
+            config: const CriterionConfig(
+              useKbssd: true,
+              generateHtmlReport: false,
+              exportJson: false,
+              kbssdWindowSize: 2,
+              kbssdMaxSamples: 6,
+            ),
+          );
+          await b.run();
+          expect(callCount, greaterThan(0));
+        },
+      );
+    });
+    test('Criterion.group resets group path even if body throws', () {
+      final c = Criterion();
+      expect(
+        () => c.group('failing group', () {
+          throw Exception('boom');
+        }),
+        throwsA(isA<Exception>()),
+      );
+      c.bench('outside', () {});
+      expect(c.benchmarks.last.name, equals('outside'));
+    });
+
+    test('Benchmark.formatCount formats negative numbers correctly', () {
+      expect(Benchmark.formatCount(-5.0), equals('-5'));
+      expect(Benchmark.formatCount(-1234.0), equals('-1,234'));
+      expect(Benchmark.formatCount(-1234567.0), equals('-1,234,567'));
+      expect(Benchmark.formatCount(1234.0), equals('1,234'));
+      expect(Benchmark.formatCount(500.0), equals('500'));
+    });
+
+    test('Variant comparison groups variants by parent prefix', () {
+      final c = Criterion();
+      c.group('GroupA', () {
+        c.variants('sort', {'quick': () {}, 'merge': () {}});
+      });
+      c.group('GroupB', () {
+        c.variants('sort', {'quick': () {}, 'merge': () {}});
+      });
+      expect(c.benchmarks.length, equals(4));
+      expect(c.benchmarks[0].name, equals('GroupA / sort / quick'));
+      expect(c.benchmarks[1].name, equals('GroupA / sort / merge'));
+      expect(c.benchmarks[2].name, equals('GroupB / sort / quick'));
+      expect(c.benchmarks[3].name, equals('GroupB / sort / merge'));
     });
   });
 }

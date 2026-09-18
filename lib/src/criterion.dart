@@ -45,7 +45,7 @@ Future<List<BenchmarkResult>> criterion(
   if (!env.isJson) {
     print('=== Running Suite: $suiteName ===');
   }
-  final c = Criterion(config: config);
+  final c = Criterion(suiteName: suiteName, config: config);
   body(c);
   return await c.run();
 }
@@ -58,6 +58,9 @@ final class Criterion {
   final List<Benchmark> _benchmarks = [];
   final List<String> _groupPath = [];
 
+  /// The name of the benchmark suite, if provided.
+  final String? suiteName;
+
   /// The configuration for this Criterion instance.
   final CriterionConfig config;
 
@@ -65,7 +68,7 @@ final class Criterion {
   List<Benchmark> get benchmarks => List.unmodifiable(_benchmarks);
 
   /// Creates a new [Criterion] instance.
-  Criterion({this.config = const CriterionConfig()});
+  Criterion({this.suiteName, this.config = const CriterionConfig()});
 
   /// Registers a benchmark.
   ///
@@ -150,8 +153,11 @@ final class Criterion {
   /// The [body] callback is executed immediately to register benchmarks within the group.
   void group(String name, void Function() body) {
     _groupPath.add(name);
-    body();
-    _groupPath.removeLast();
+    try {
+      body();
+    } finally {
+      _groupPath.removeLast();
+    }
   }
 
   /// Registers a group of benchmark variants to compare their performance.
@@ -318,6 +324,10 @@ final class Criterion {
             wrappedNoOp = () => noOp(p);
           } else if (noOp is Function(dynamic)) {
             wrappedNoOp = () => noOp(p);
+          } else if (noOp is Function()) {
+            throw ArgumentError(
+              'noOp must accept (P parameter) when setup is not provided',
+            );
           } else {
             wrappedNoOp = () => noOp(p);
           }
@@ -375,7 +385,9 @@ final class Criterion {
     if (env.isJson) {
       print(jsonEncode(results.map((r) => r.toJson()).toList()));
     } else {
-      await ReportGenerator(config).generate(results, history: fullHistory);
+      await ReportGenerator(
+        config,
+      ).generate(results, history: fullHistory, suiteName: suiteName);
       _printVariantComparisons(results);
     }
 
@@ -392,7 +404,11 @@ final class Criterion {
     final groups = <String, List<BenchmarkResult>>{};
     for (final r in results) {
       if (r.variantGroup != null) {
-        groups.putIfAbsent(r.variantGroup!, () => []).add(r);
+        final key =
+            (r.variantName != null && r.name.endsWith(' / ${r.variantName}'))
+            ? r.name.substring(0, r.name.length - ' / ${r.variantName}'.length)
+            : r.variantGroup!;
+        groups.putIfAbsent(key, () => []).add(r);
       }
     }
 
@@ -409,7 +425,7 @@ final class Criterion {
 
       final baseline = groupResults.first;
       final baselineName = baseline.variantName ?? baseline.name;
-      final baselineTime = baseline.primary.mean;
+      final baselineTime = baseline.net?.timeNs ?? baseline.primary.mean;
 
       print(
         '| $baselineName (baseline) | ${Benchmark.formatDuration(baselineTime)} | 1.00x | - |',
@@ -418,17 +434,35 @@ final class Criterion {
       for (var i = 1; i < groupResults.length; i++) {
         final current = groupResults[i];
         final currentName = current.variantName ?? current.name;
-        final currentTime = current.primary.mean;
+        final currentTime = current.net?.timeNs ?? current.primary.mean;
 
         final relativeSpeedStr = _formatRelativeSpeed(
           baselineTime,
           currentTime,
         );
 
-        final significant = _isSignificant(
-          baseline.primary.meanCI,
-          current.primary.meanCI,
-        );
+        final baselineCI = (baseline.net != null && baseline.noOp != null)
+            ? ConfidenceInterval(
+                lowerBound:
+                    (baseline.primary.meanCI.lowerBound - baseline.noOp!.mean)
+                        .clamp(0.0, double.infinity),
+                upperBound:
+                    (baseline.primary.meanCI.upperBound - baseline.noOp!.mean)
+                        .clamp(0.0, double.infinity),
+              )
+            : baseline.primary.meanCI;
+        final currentCI = (current.net != null && current.noOp != null)
+            ? ConfidenceInterval(
+                lowerBound:
+                    (current.primary.meanCI.lowerBound - current.noOp!.mean)
+                        .clamp(0.0, double.infinity),
+                upperBound:
+                    (current.primary.meanCI.upperBound - current.noOp!.mean)
+                        .clamp(0.0, double.infinity),
+              )
+            : current.primary.meanCI;
+
+        final significant = _isSignificant(baselineCI, currentCI);
         final significantStr = significant ? 'Yes' : 'No';
 
         print(
@@ -542,6 +576,14 @@ final class Benchmark<T> {
       if (hasNoOp) {
         await _warmup(noOp!);
       }
+    } else if (warmupDuration > Duration.zero) {
+      final shortWarmup = warmupDuration < const Duration(milliseconds: 50)
+          ? warmupDuration
+          : const Duration(milliseconds: 50);
+      await _warmup(fn, shortWarmup);
+      if (hasNoOp) {
+        await _warmup(noOp!, shortWarmup);
+      }
     }
 
     // 2. Calibration
@@ -580,6 +622,8 @@ final class Benchmark<T> {
     if (!env.isJson) {
       print(''); // Empty line after each benchmark
     }
+
+    Blackhole.preventDCE();
 
     return _createResult(iterations, mainRun, noOpRun);
   }
@@ -701,7 +745,7 @@ final class Benchmark<T> {
     // Memory Measurement
     final memoryIterations = setup != null
         ? iterations.clamp(1, 1000)
-        : (iterations > 100 ? iterations : 100);
+        : iterations.clamp(100, 10000);
     final memoryResult = await MemoryMeasurer.measure(
       fn: targetFn,
       iterations: memoryIterations,
@@ -759,22 +803,27 @@ final class Benchmark<T> {
     );
   }
 
-  Future<void> _warmup(Function targetFn) async {
+  Future<void> _warmup(Function targetFn, [Duration? duration]) async {
+    final effectiveWarmup = duration ?? warmupDuration;
     final stopwatch = Stopwatch()..start();
     final frequency = stopwatch.frequency;
-    final targetTicks = (frequency * warmupDuration.inMicroseconds) / 1000000;
+    final targetTicks = (frequency * effectiveWarmup.inMicroseconds) / 1000000;
     while (stopwatch.elapsedTicks < targetTicks) {
       if (setup != null) {
         final state = setup!();
         final resolvedState = state is Future ? await state : state;
         final r = targetFn(resolvedState);
         if (r is Future) {
-          await r;
+          Blackhole.sink = await r;
+        } else {
+          Blackhole.sink = r;
         }
       } else {
         final r = targetFn();
         if (r is Future) {
-          await r;
+          Blackhole.sink = await r;
+        } else {
+          Blackhole.sink = r;
         }
       }
     }
@@ -805,33 +854,75 @@ final class Benchmark<T> {
   Future<double> _measureIterations(Function targetFn, int count) async {
     final stopwatch = Stopwatch();
     if (setup != null) {
-      var remaining = count;
-      while (remaining > 0) {
-        final batch = batchSize.batchSizeFor(remaining);
-        final states = <T>[];
-        for (var i = 0; i < batch; i++) {
-          final state = setup!();
-          states.add(state is Future ? await state : state);
+      if (targetFn is Object? Function(T)) {
+        final fnSync = targetFn;
+        var remaining = count;
+        while (remaining > 0) {
+          final batch = batchSize.batchSizeFor(remaining);
+          final states = <T>[];
+          for (var i = 0; i < batch; i++) {
+            final state = setup!();
+            states.add(state is Future ? await state : state);
+          }
+          stopwatch.start();
+          for (var i = 0; i < batch; i++) {
+            final r = fnSync(states[i]);
+            if (r is Future) {
+              Blackhole.sink = await r;
+            } else {
+              Blackhole.sink = r;
+            }
+          }
+          stopwatch.stop();
+          remaining -= batch;
         }
+      } else {
+        var remaining = count;
+        while (remaining > 0) {
+          final batch = batchSize.batchSizeFor(remaining);
+          final states = <T>[];
+          for (var i = 0; i < batch; i++) {
+            final state = setup!();
+            states.add(state is Future ? await state : state);
+          }
+          stopwatch.start();
+          for (var i = 0; i < batch; i++) {
+            final r = targetFn(states[i]);
+            if (r is Future) {
+              Blackhole.sink = await r;
+            } else {
+              Blackhole.sink = r;
+            }
+          }
+          stopwatch.stop();
+          remaining -= batch;
+        }
+      }
+    } else {
+      if (targetFn is Object? Function()) {
+        final fnSync = targetFn;
         stopwatch.start();
-        for (var i = 0; i < batch; i++) {
-          final r = targetFn(states[i]);
+        for (var i = 0; i < count; i++) {
+          final r = fnSync();
           if (r is Future) {
-            await r;
+            Blackhole.sink = await r;
+          } else {
+            Blackhole.sink = r;
           }
         }
         stopwatch.stop();
-        remaining -= batch;
-      }
-    } else {
-      stopwatch.start();
-      for (var i = 0; i < count; i++) {
-        final r = targetFn();
-        if (r is Future) {
-          await r;
+      } else {
+        stopwatch.start();
+        for (var i = 0; i < count; i++) {
+          final r = targetFn();
+          if (r is Future) {
+            Blackhole.sink = await r;
+          } else {
+            Blackhole.sink = r;
+          }
         }
+        stopwatch.stop();
       }
-      stopwatch.stop();
     }
     final ticks = stopwatch.elapsedTicks;
     final frequency = stopwatch.frequency;
@@ -1224,19 +1315,22 @@ final class Benchmark<T> {
 
   /// Formats count with commas.
   static String formatCount(double count) {
-    if (count < 1000) {
+    if (count.abs() < 1000) {
       return count.toStringAsFixed(1).replaceAll(RegExp(r'\.0$'), '');
     }
     final intCount = count.round();
     final str = intCount.toString();
     final buffer = StringBuffer();
-    for (int i = 0; i < str.length; i++) {
-      if (i > 0 && (str.length - i) % 3 == 0) {
+    final isNegative = str.startsWith('-');
+    final digits = isNegative ? str.substring(1) : str;
+
+    for (int i = 0; i < digits.length; i++) {
+      if (i > 0 && (digits.length - i) % 3 == 0) {
         buffer.write(',');
       }
-      buffer.write(str[i]);
+      buffer.write(digits[i]);
     }
-    return buffer.toString();
+    return (isNegative ? '-' : '') + buffer.toString();
   }
 
   /// Formats RSS delta.

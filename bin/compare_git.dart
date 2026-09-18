@@ -12,14 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+import 'dart:convert';
 import 'dart:io';
+
 import 'package:path/path.dart' as p;
 import 'package:criterion/criterion.dart';
 
 void main(List<String> args) async {
   if (args.length < 3) {
     stderr.writeln(
-      'Usage: dart run bin/compare_git.dart <ref1> <ref2> <benchmark_file.dart> [extra_args...]',
+      'Usage: dart run criterion:compare_git <ref1> <ref2> <benchmark_file.dart> [extra_args...]',
     );
     exit(1);
   }
@@ -46,6 +48,8 @@ void main(List<String> args) async {
     benchmarkFile.absolute.path,
     from: gitRoot,
   );
+  final packageRoot = _findPackageRoot(benchmarkFile, gitRoot);
+  final relPackageDir = p.relative(packageRoot, from: gitRoot);
 
   Directory? worktreeDir1;
   Directory? worktreeDir2;
@@ -64,6 +68,7 @@ void main(List<String> args) async {
       relativeBenchmarkPath,
       benchmarkFile,
       extraArgs,
+      relPackageDir,
     );
 
     final results2 = await _runBenchmarkInWorktree(
@@ -71,6 +76,7 @@ void main(List<String> args) async {
       relativeBenchmarkPath,
       benchmarkFile,
       extraArgs,
+      relPackageDir,
     );
 
     final report = compareResults(results1, results2).toMarkdownTable();
@@ -78,7 +84,7 @@ void main(List<String> args) async {
   } catch (e, stackTrace) {
     stderr.writeln('Error: $e');
     stderr.writeln(stackTrace);
-    exit(1);
+    exitCode = 1;
   } finally {
     if (worktreeDir1 != null) {
       await _cleanupWorktree(worktreeDir1.path);
@@ -87,6 +93,23 @@ void main(List<String> args) async {
       await _cleanupWorktree(worktreeDir2.path);
     }
   }
+}
+
+String _findPackageRoot(File benchmarkFile, String gitRoot) {
+  Directory dir = benchmarkFile.existsSync()
+      ? benchmarkFile.parent.absolute
+      : Directory.current.absolute;
+  final root = Directory(gitRoot).absolute;
+  while (true) {
+    if (File(p.join(dir.path, 'pubspec.yaml')).existsSync()) {
+      return dir.path;
+    }
+    if (p.equals(dir.path, root.path) || p.equals(dir.path, dir.parent.path)) {
+      break;
+    }
+    dir = dir.parent;
+  }
+  return gitRoot;
 }
 
 Future<bool> _isGitRepository() async {
@@ -150,6 +173,7 @@ Future<List<BenchmarkResult>> _runBenchmarkInWorktree(
   String relativeBenchmarkPath,
   File sourceBenchmarkFile,
   List<String> extraArgs,
+  String relPackageDir,
 ) async {
   final targetBenchmarkPath = p.join(worktreePath, relativeBenchmarkPath);
   final targetBenchmarkFile = File(targetBenchmarkPath);
@@ -161,38 +185,67 @@ Future<List<BenchmarkResult>> _runBenchmarkInWorktree(
   sourceBenchmarkFile.copySync(targetBenchmarkPath);
 
   final dartExe = Platform.resolvedExecutable;
+  final worktreePackageDir = relPackageDir == '.'
+      ? worktreePath
+      : p.join(worktreePath, relPackageDir);
 
-  print('Running pub get in $worktreePath...');
+  print('Running pub get in $worktreePackageDir...');
   final pubGetResult = await Process.run(dartExe, [
     'pub',
     'get',
-  ], workingDirectory: worktreePath);
+  ], workingDirectory: worktreePackageDir);
   if (pubGetResult.exitCode != 0) {
     throw Exception(
-      'pub get failed in $worktreePath:\nStdout: ${pubGetResult.stdout}\nStderr: ${pubGetResult.stderr}',
+      'pub get failed in $worktreePackageDir:\nStdout: ${pubGetResult.stdout}\nStderr: ${pubGetResult.stderr}',
     );
   }
 
-  print('Running benchmark in $worktreePath...');
+  print('Running benchmark in $worktreePackageDir...');
+  final benchmarkArg = p.relative(
+    targetBenchmarkPath,
+    from: worktreePackageDir,
+  );
   final runResult = await Process.run(dartExe, [
     'run',
     'criterion:run',
-    relativeBenchmarkPath,
+    '--json',
+    benchmarkArg,
     ...extraArgs,
-  ], workingDirectory: worktreePath);
+  ], workingDirectory: worktreePackageDir);
 
   if (runResult.exitCode != 0) {
     throw Exception(
-      'Benchmark run failed in $worktreePath:\nStdout: ${runResult.stdout}\nStderr: ${runResult.stderr}',
+      'Benchmark run failed in $worktreePackageDir:\nStdout: ${runResult.stdout}\nStderr: ${runResult.stderr}',
     );
   }
 
-  final resultsPath = p.join(worktreePath, 'benchmark/report/results.json');
-  final resultsFile = File(resultsPath);
-  if (!resultsFile.existsSync()) {
-    throw Exception('Results file not found at $resultsPath');
+  final allResults = <BenchmarkResult>[];
+  final stdoutString = runResult.stdout.toString();
+  for (final line in stdoutString.split('\n')) {
+    final trimmed = line.trim();
+    if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
+      try {
+        final parsed = jsonDecode(trimmed);
+        if (parsed is List &&
+            parsed.every(
+              (e) =>
+                  e is Map<String, dynamic> &&
+                  e.containsKey('name') &&
+                  e.containsKey('primary'),
+            )) {
+          allResults.addAll(loadResults(trimmed));
+        }
+      } catch (_) {
+        // Not a valid JSON array of benchmark results, continue
+      }
+    }
   }
 
-  final jsonContent = resultsFile.readAsStringSync();
-  return loadResults(jsonContent);
+  if (allResults.isEmpty) {
+    throw Exception(
+      'No benchmark results found in stdout in $worktreePackageDir.\nStdout: ${runResult.stdout}\nStderr: ${runResult.stderr}',
+    );
+  }
+
+  return allResults;
 }

@@ -14,7 +14,9 @@
 
 import 'dart:convert';
 import 'dart:io';
+
 import 'package:args/args.dart';
+import 'package:criterion/criterion.dart';
 import 'package:criterion/src/dart_environment.dart' as env_helpers;
 import 'package:node_preamble/preamble.dart' as node_preamble;
 
@@ -65,9 +67,21 @@ Future<void> main(List<String> args) async {
   final tempDir = Directory.systemTemp.createTempSync('criterion_run_');
 
   final aggregatedJsonResults = <dynamic>[];
+  final collectedFlavorResults = <BenchmarkResult>[];
+  final defaultResultsFile = File('benchmark/report/results.json');
 
   try {
     for (final flavor in flavors) {
+      if (!isJson &&
+          (flavors.length > 1 ||
+              flavors.contains('js') ||
+              flavors.contains('wasm')) &&
+          defaultResultsFile.existsSync()) {
+        defaultResultsFile.deleteSync();
+      }
+
+      final countBeforeFlavor = collectedFlavorResults.length;
+
       if (!isJson) {
         print('=== Running flavor: $flavor ===');
       }
@@ -79,11 +93,24 @@ Future<void> main(List<String> args) async {
         json: isJson,
       );
 
-      final defineFlags = defines;
+      final defineFlags = [
+        ...defines,
+        if (!isJson &&
+            (flavors.length > 1 || flavor == 'js' || flavor == 'wasm'))
+          '--define=CRITERION_EMIT_RESULTS_MARKER=true',
+      ];
 
       if (flavor == 'jit') {
         final processArgs = [...vmFlags, ...defineFlags, targetPath];
-        await _runProcess(dartPath, processArgs, isJson, aggregatedJsonResults);
+        if (!await _runProcess(
+          dartPath,
+          processArgs,
+          isJson,
+          aggregatedJsonResults,
+          collectedFlavorResults,
+        )) {
+          return;
+        }
       } else if (flavor == 'aot') {
         final tempExePath = '${tempDir.path}/temp_aot.exe';
         if (!isJson) {
@@ -101,9 +128,18 @@ Future<void> main(List<String> args) async {
         final compileResult = await Process.run(dartPath, compileArgs);
         if (compileResult.exitCode != 0) {
           _printCompileError(compileResult);
-          exit(compileResult.exitCode);
+          exitCode = compileResult.exitCode;
+          return;
         }
-        await _runProcess(tempExePath, [], isJson, aggregatedJsonResults);
+        if (!await _runProcess(
+          tempExePath,
+          [],
+          isJson,
+          aggregatedJsonResults,
+          collectedFlavorResults,
+        )) {
+          return;
+        }
       } else if (flavor == 'js') {
         final tempJsPath = '${tempDir.path}/temp_js.js';
         if (!isJson) {
@@ -121,7 +157,8 @@ Future<void> main(List<String> args) async {
         final compileResult = await Process.run(dartPath, compileArgs);
         if (compileResult.exitCode != 0) {
           _printCompileError(compileResult);
-          exit(compileResult.exitCode);
+          exitCode = compileResult.exitCode;
+          return;
         }
 
         // Prepend preamble
@@ -130,12 +167,15 @@ Future<void> main(List<String> args) async {
         final preamble = node_preamble.getPreamble();
         jsFile.writeAsStringSync('$preamble\n$jsContent');
 
-        await _runProcess(
+        if (!await _runProcess(
           'node',
           [...vmFlags, tempJsPath],
           isJson,
           aggregatedJsonResults,
-        );
+          collectedFlavorResults,
+        )) {
+          return;
+        }
       } else if (flavor == 'wasm') {
         final tempWasmPath = '${tempDir.path}/temp_wasm.wasm';
         final tempMjsPath = '${tempDir.path}/temp_wasm.mjs';
@@ -156,17 +196,18 @@ Future<void> main(List<String> args) async {
         final compileResult = await Process.run(dartPath, compileArgs);
         if (compileResult.exitCode != 0) {
           _printCompileError(compileResult);
-          exit(compileResult.exitCode);
+          exitCode = compileResult.exitCode;
+          return;
         }
 
         // Create the WASM runner script
         final runnerContent =
             '''
-import { compile } from 'file://$tempMjsPath';
+import { compile } from ${jsonEncode(Uri.file(tempMjsPath).toString())};
 import { readFileSync } from 'fs';
 import { argv } from 'process';
 
-const bytes = readFileSync('$tempWasmPath');
+const bytes = readFileSync(${jsonEncode(tempWasmPath)});
 const compiled = await compile(bytes);
 const instance = await compiled.instantiate();
 const dartArgs = argv.slice(2);
@@ -174,13 +215,43 @@ instance.invokeMain(...dartArgs);
 ''';
         File(tempRunnerPath).writeAsStringSync(runnerContent);
 
-        await _runProcess(
+        if (!await _runProcess(
           'node',
           [...vmFlags, tempRunnerPath],
           isJson,
           aggregatedJsonResults,
-        );
+          collectedFlavorResults,
+        )) {
+          return;
+        }
       }
+
+      if (!isJson &&
+          (flavors.length > 1 ||
+              flavors.contains('js') ||
+              flavors.contains('wasm')) &&
+          defaultResultsFile.existsSync()) {
+        if (collectedFlavorResults.length == countBeforeFlavor) {
+          final jsonContent = defaultResultsFile.readAsStringSync();
+          collectedFlavorResults.addAll(loadResults(jsonContent));
+        }
+        defaultResultsFile.deleteSync();
+      }
+    }
+
+    if (!isJson &&
+        (flavors.length > 1 ||
+            flavors.contains('js') ||
+            flavors.contains('wasm')) &&
+        collectedFlavorResults.isNotEmpty) {
+      final generator = ReportGenerator(
+        const CriterionConfig(
+          reportDir: 'benchmark/report',
+          exportJson: true,
+          generateHtmlReport: true,
+        ),
+      );
+      await generator.generate(collectedFlavorResults);
     }
 
     if (isJson) {
@@ -203,57 +274,76 @@ void _printCompileError(ProcessResult result) {
   print(result.stderr);
 }
 
-Future<void> _runProcess(
+Future<bool> _runProcess(
   String executable,
   List<String> arguments,
   bool isJson,
-  List<dynamic> aggregatedResults,
-) async {
+  List<dynamic> aggregatedResults, [
+  List<BenchmarkResult>? collectedFlavorResults,
+]) async {
   if (isJson) {
     final result = await Process.run(executable, arguments);
     if (result.exitCode != 0) {
       print('Execution failed with exit code ${result.exitCode}');
       print(result.stdout);
       print(result.stderr);
-      exit(result.exitCode);
+      exitCode = result.exitCode;
+      return false;
     }
     try {
       final lines = (result.stdout as String).split('\n');
-      dynamic parsed;
+      var foundAny = false;
       for (final line in lines) {
         final trimmed = line.trim();
         if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
           try {
-            parsed = jsonDecode(trimmed);
-            break;
+            final parsed = jsonDecode(trimmed);
+            if (parsed is List &&
+                parsed.every(
+                  (e) =>
+                      e is Map<String, dynamic> &&
+                      e.containsKey('name') &&
+                      e.containsKey('primary'),
+                )) {
+              aggregatedResults.addAll(parsed);
+              foundAny = true;
+            }
           } catch (_) {
             // Not valid JSON, continue
           }
         }
       }
-      if (parsed == null) {
+      if (!foundAny) {
         throw FormatException('Could not find JSON array in output');
       }
-      if (parsed is List) {
-        aggregatedResults.addAll(parsed);
-      } else {
-        aggregatedResults.add(parsed);
-      }
+      return true;
     } catch (e) {
       print('Failed to parse JSON output from process: $e');
       print('Output was:');
       print(result.stdout);
-      exit(1);
+      exitCode = 1;
+      return false;
     }
   } else {
-    final process = await Process.start(
-      executable,
-      arguments,
-      mode: ProcessStartMode.inheritStdio,
-    );
-    final exitCode = await process.exitCode;
-    if (exitCode != 0) {
-      exit(exitCode);
+    final process = await Process.start(executable, arguments);
+    final stderrFuture = process.stderr.listen(stderr.add).asFuture<void>();
+    await for (final line
+        in process.stdout
+            .transform(utf8.decoder)
+            .transform(const LineSplitter())) {
+      if (line.startsWith('__CRITERION_RESULTS_JSON__:')) {
+        final jsonSuffix = line.substring('__CRITERION_RESULTS_JSON__:'.length);
+        collectedFlavorResults?.addAll(loadResults(jsonSuffix));
+      } else {
+        stdout.writeln(line);
+      }
     }
+    await stderrFuture;
+    final code = await process.exitCode;
+    if (code != 0) {
+      exitCode = code;
+      return false;
+    }
+    return true;
   }
 }

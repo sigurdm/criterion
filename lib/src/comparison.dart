@@ -28,7 +28,13 @@ final class MetricComparison {
   double get diff => after - before;
 
   /// The percentage difference relative to before.
-  double get percentDiff => before == 0 ? 0 : (diff / before) * 100;
+  double get percentDiff {
+    if (before == 0) {
+      if (diff == 0) return 0.0;
+      return diff > 0 ? double.infinity : double.negativeInfinity;
+    }
+    return (diff / before) * 100;
+  }
 
   /// Creates a [MetricComparison].
   MetricComparison(this.before, this.after);
@@ -249,42 +255,70 @@ SuiteComparison compareResults(
   for (final key in matchedKeys) {
     final b = beforeMap[key]!;
     final a = afterMap[key]!;
-    final timeSignificant = _isSignificant(b.primary.meanCI, a.primary.meanCI);
 
+    final bMeanCI = (b.net != null && b.noOp != null)
+        ? ConfidenceInterval(
+            lowerBound: (b.primary.meanCI.lowerBound - b.noOp!.mean).clamp(
+              0.0,
+              double.infinity,
+            ),
+            upperBound: (b.primary.meanCI.upperBound - b.noOp!.mean).clamp(
+              0.0,
+              double.infinity,
+            ),
+          )
+        : b.primary.meanCI;
+    final aMeanCI = (a.net != null && a.noOp != null)
+        ? ConfidenceInterval(
+            lowerBound: (a.primary.meanCI.lowerBound - a.noOp!.mean).clamp(
+              0.0,
+              double.infinity,
+            ),
+            upperBound: (a.primary.meanCI.upperBound - a.noOp!.mean).clamp(
+              0.0,
+              double.infinity,
+            ),
+          )
+        : a.primary.meanCI;
+    final timeSignificant = _isSignificant(bMeanCI, aMeanCI);
+
+    final bTime = b.net?.timeNs ?? b.primary.mean;
+    final aTime = a.net?.timeNs ?? a.primary.mean;
+
+    final bBytes =
+        b.net?.allocatedBytes ?? b.primary.memory?.allocatedBytesPerIteration;
+    final aBytes =
+        a.net?.allocatedBytes ?? a.primary.memory?.allocatedBytesPerIteration;
     MetricComparison? bytes;
-    if (b.primary.memory?.allocatedBytesPerIteration != null &&
-        a.primary.memory?.allocatedBytesPerIteration != null) {
-      bytes = MetricComparison(
-        b.primary.memory!.allocatedBytesPerIteration!,
-        a.primary.memory!.allocatedBytesPerIteration!,
-      );
+    if (bBytes != null && aBytes != null) {
+      bytes = MetricComparison(bBytes, aBytes);
     }
 
+    final bObjects =
+        b.net?.allocatedObjects ??
+        b.primary.memory?.allocatedObjectsPerIteration;
+    final aObjects =
+        a.net?.allocatedObjects ??
+        a.primary.memory?.allocatedObjectsPerIteration;
     MetricComparison? objects;
-    if (b.primary.memory?.allocatedObjectsPerIteration != null &&
-        a.primary.memory?.allocatedObjectsPerIteration != null) {
-      objects = MetricComparison(
-        b.primary.memory!.allocatedObjectsPerIteration!,
-        a.primary.memory!.allocatedObjectsPerIteration!,
-      );
+    if (bObjects != null && aObjects != null) {
+      objects = MetricComparison(bObjects, aObjects);
     }
 
+    final bInst =
+        b.net?.instructions ?? b.primary.instructions?.instructionsPerIteration;
+    final aInst =
+        a.net?.instructions ?? a.primary.instructions?.instructionsPerIteration;
     MetricComparison? inst;
-    if (b.primary.instructions?.instructionsPerIteration != null &&
-        a.primary.instructions?.instructionsPerIteration != null) {
-      inst = MetricComparison(
-        b.primary.instructions!.instructionsPerIteration,
-        a.primary.instructions!.instructionsPerIteration,
-      );
+    if (bInst != null && aInst != null) {
+      inst = MetricComparison(bInst, aInst);
     }
 
+    final bCycles = b.net?.cycles ?? b.primary.cyclesPerIteration;
+    final aCycles = a.net?.cycles ?? a.primary.cyclesPerIteration;
     MetricComparison? cycles;
-    if (b.primary.cyclesPerIteration != null &&
-        a.primary.cyclesPerIteration != null) {
-      cycles = MetricComparison(
-        b.primary.cyclesPerIteration!,
-        a.primary.cyclesPerIteration!,
-      );
+    if (bCycles != null && aCycles != null) {
+      cycles = MetricComparison(bCycles, aCycles);
     }
 
     compared.add(
@@ -292,7 +326,7 @@ SuiteComparison compareResults(
         name: a.name,
         platform: a.platform,
         parameterValue: a.parameterValue,
-        time: MetricComparison(b.primary.mean, a.primary.mean),
+        time: MetricComparison(bTime, aTime),
         timeSignificant: timeSignificant,
         allocatedBytes: bytes,
         allocatedObjects: objects,
@@ -366,6 +400,8 @@ String _formatCount(double count) {
 }
 
 String _formatPercent(double pct) {
+  if (pct.isNaN) return "N/A";
+  if (pct.isInfinite) return pct > 0 ? "+∞%" : "-∞%";
   final sign = pct > 0 ? "+" : "";
   return "$sign${pct.toStringAsFixed(2)}%";
 }

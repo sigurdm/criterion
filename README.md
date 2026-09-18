@@ -101,7 +101,7 @@ c.bench<List<int>>(
 ### Batched Setups (`batchSize`)
 When a benchmark uses `setup` to generate large objects or buffers, pre-allocating all benchmark iterations in memory simultaneously can cause RAM exhaustion ($O(\text{iterations})$ memory) and CPU cache eviction.
 
-Criterion supports **Batched Setups** via the optional `batchSize` parameter (defaulting to `BatchSize.smallInput`—batches of 100—when `setup` is provided):
+Criterion supports **Batched Setups** via the optional `batchSize` parameter (defaulting to `BatchSize.smallInput`—batches of 1000—when `setup` is provided):
 
 ```dart
 // For large allocating setups (e.g. huge buffers or FFI matrices),
@@ -115,7 +115,7 @@ c.bench<List<double>>(
 ```
 
 Available batch modes in `BatchSize`:
-* `BatchSize.smallInput`: Batches of 100 iterations (default when `setup` is provided). Ideal for primitives or small structs with minimal stopwatch start/stop overhead (< 0.2 ns/iter).
+* `BatchSize.smallInput`: Batches of 1000 iterations (default when `setup` is provided). Ideal for primitives or small structs with minimal stopwatch start/stop overhead (< 0.2 ns/iter).
 * `BatchSize.largeInput` / `BatchSize.perIteration`: Batches of 1 iteration. Ideal for heavy allocations.
 * `BatchSize.unbatched` / `BatchSize.all`: Allocates all iterations upfront in a single unbatched pass.
 * `BatchSize.numIterations(n)`: Custom batch size of `n` iterations.

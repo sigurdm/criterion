@@ -24,6 +24,9 @@ final class Blackhole {
   /// benchmark returned values in the timing loops.
   static set sink(Object? value) => _sink = value;
 
+  /// The last value consumed by [sink].
+  static Object? get sink => _sink;
+
   /// Consumes the given [value] to prevent dead-code elimination.
   @pragma('vm:prefer-inline')
   @pragma('dart2js:prefer-inline')

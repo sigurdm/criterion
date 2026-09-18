@@ -429,5 +429,157 @@ void main() {
       expect(loaded, hasLength(1));
       expect(loaded.first.name, equals("bench"));
     });
+
+    test("compareResults respects net results and shifts CI by noOp mean", () {
+      final before = [
+        BenchmarkResult(
+          name: "bench_net",
+          iterations: 100,
+          primary: MeasurementResult(
+            sampleTimes: [100.0],
+            mean: 100.0,
+            median: 100.0,
+            stdDev: 0.0,
+            meanCI: ConfidenceInterval(lowerBound: 95.0, upperBound: 105.0),
+            medianCI: ConfidenceInterval(lowerBound: 95.0, upperBound: 105.0),
+            outliers: OutlierAnalysis(
+              lowSevere: 0,
+              lowMild: 0,
+              highMild: 0,
+              highSevere: 0,
+              outlierVariancePercentage: 0.0,
+            ),
+            memory: MemoryResult(
+              allocatedBytesPerIteration: 1000.0,
+              allocatedObjectsPerIteration: 10.0,
+              rssDeltaBytes: 0,
+            ),
+            instructions: InstructionResult(instructionsPerIteration: 500.0),
+            cyclesPerIteration: 800.0,
+          ),
+          noOp: MeasurementResult(
+            sampleTimes: [20.0],
+            mean: 20.0,
+            median: 20.0,
+            stdDev: 0.0,
+            meanCI: ConfidenceInterval(lowerBound: 18.0, upperBound: 22.0),
+            medianCI: ConfidenceInterval(lowerBound: 18.0, upperBound: 22.0),
+            outliers: OutlierAnalysis(
+              lowSevere: 0,
+              lowMild: 0,
+              highMild: 0,
+              highSevere: 0,
+              outlierVariancePercentage: 0.0,
+            ),
+          ),
+          net: NetResult(
+            timeNs: 80.0,
+            allocatedBytes: 800.0,
+            allocatedObjects: 8.0,
+            instructions: 400.0,
+            cycles: 600.0,
+          ),
+        ),
+      ];
+
+      final after = [
+        BenchmarkResult(
+          name: "bench_net",
+          iterations: 100,
+          primary: MeasurementResult(
+            sampleTimes: [120.0],
+            mean: 120.0,
+            median: 120.0,
+            stdDev: 0.0,
+            meanCI: ConfidenceInterval(lowerBound: 115.0, upperBound: 125.0),
+            medianCI: ConfidenceInterval(lowerBound: 115.0, upperBound: 125.0),
+            outliers: OutlierAnalysis(
+              lowSevere: 0,
+              lowMild: 0,
+              highMild: 0,
+              highSevere: 0,
+              outlierVariancePercentage: 0.0,
+            ),
+            memory: MemoryResult(
+              allocatedBytesPerIteration: 1200.0,
+              allocatedObjectsPerIteration: 12.0,
+              rssDeltaBytes: 0,
+            ),
+            instructions: InstructionResult(instructionsPerIteration: 600.0),
+            cyclesPerIteration: 1000.0,
+          ),
+          noOp: MeasurementResult(
+            sampleTimes: [20.0],
+            mean: 20.0,
+            median: 20.0,
+            stdDev: 0.0,
+            meanCI: ConfidenceInterval(lowerBound: 18.0, upperBound: 22.0),
+            medianCI: ConfidenceInterval(lowerBound: 18.0, upperBound: 22.0),
+            outliers: OutlierAnalysis(
+              lowSevere: 0,
+              lowMild: 0,
+              highMild: 0,
+              highSevere: 0,
+              outlierVariancePercentage: 0.0,
+            ),
+          ),
+          net: NetResult(
+            timeNs: 100.0,
+            allocatedBytes: 900.0,
+            allocatedObjects: 9.0,
+            instructions: 450.0,
+            cycles: 700.0,
+          ),
+        ),
+      ];
+
+      final comparison = compareResults(before, after);
+      expect(comparison.compared.length, 1);
+      final c = comparison.compared.first;
+
+      expect(c.time.before, 80.0);
+      expect(c.time.after, 100.0);
+      expect(c.time.diff, 20.0);
+      expect(c.timeSignificant, isTrue);
+
+      expect(c.allocatedBytes!.before, 800.0);
+      expect(c.allocatedBytes!.after, 900.0);
+      expect(c.allocatedObjects!.before, 8.0);
+      expect(c.allocatedObjects!.after, 9.0);
+      expect(c.instructions!.before, 400.0);
+      expect(c.instructions!.after, 450.0);
+      expect(c.cycles!.before, 600.0);
+      expect(c.cycles!.after, 700.0);
+    });
+    test("MetricComparison.percentDiff when before == 0", () {
+      final zeroDiff = MetricComparison(0.0, 0.0);
+      expect(zeroDiff.percentDiff, equals(0.0));
+
+      final posDiff = MetricComparison(0.0, 10.0);
+      expect(posDiff.percentDiff, equals(double.infinity));
+
+      final negDiff = MetricComparison(0.0, -10.0);
+      expect(negDiff.percentDiff, equals(double.negativeInfinity));
+    });
+
+    test("Formatting comparison table with infinite percent diff", () {
+      final r1 = createMockResult(
+        name: "bench_inf",
+        mean: 100.0,
+        lowerBound: 90.0,
+        upperBound: 110.0,
+        instructions: 0.0,
+      );
+      final r2 = createMockResult(
+        name: "bench_inf",
+        mean: 100.0,
+        lowerBound: 90.0,
+        upperBound: 110.0,
+        instructions: 50.0,
+      );
+      final comp = compareResults([r1], [r2]);
+      final table = comp.toMarkdownTable();
+      expect(table, contains("+∞%"));
+    });
   });
 }

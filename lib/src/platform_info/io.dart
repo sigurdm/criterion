@@ -9,15 +9,15 @@ GitCommit? get localGitCommit {
     final result = Process.runSync('git', [
       'log',
       '-1',
-      '--format=%H%n%h%n%s%n%cI',
+      '--format=%H%x1f%h%x1f%s%x1f%cI',
     ]);
     if (result.exitCode == 0) {
-      final lines = (result.stdout as String).trim().split('\n');
-      if (lines.length >= 4) {
-        final hash = lines[0].trim();
-        final shortHash = lines[1].trim();
-        final message = lines[2].trim();
-        final dateStr = lines[3].trim();
+      final parts = (result.stdout as String).trim().split('\x1f');
+      if (parts.length >= 4) {
+        final hash = parts[0].trim();
+        final shortHash = parts[1].trim();
+        final message = parts[2].trim();
+        final dateStr = parts[3].trim();
         final timestamp = DateTime.tryParse(dateStr);
         if (hash.isNotEmpty) {
           return GitCommit(

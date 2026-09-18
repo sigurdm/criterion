@@ -261,6 +261,90 @@ void main() {
       expect(htmlContent, contains('generateParameterCharts'));
     });
 
+    test('escapes HTML in suiteName and includes pinned scripts', () async {
+      final config = CriterionConfig(
+        reportDir: tempDir.path,
+        generateHtmlReport: true,
+        exportJson: true,
+        useKbssd: false,
+      );
+
+      final results = await criterion('Suite with <Special & Characters>', (c) {
+        c.bench(
+          'bench_simple',
+          () {},
+          samples: 5,
+          warmupDuration: Duration.zero,
+        );
+      }, config: config);
+
+      final generator = ReportGenerator(config);
+      await generator.generate(
+        results,
+        suiteName: 'Suite with <Special & Characters>',
+      );
+
+      final htmlFile = File('${tempDir.path}/index.html');
+      expect(htmlFile.existsSync(), isTrue);
+
+      final htmlContent = htmlFile.readAsStringSync();
+      expect(
+        htmlContent,
+        contains('<title>Suite with &lt;Special &amp; Characters&gt;</title>'),
+      );
+      expect(
+        htmlContent,
+        contains('<h1>Suite with &lt;Special &amp; Characters&gt;</h1>'),
+      );
+      expect(
+        htmlContent,
+        contains(
+          '<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>',
+        ),
+      );
+      expect(
+        htmlContent,
+        contains(
+          '<script src="https://cdn.jsdelivr.net/npm/@sgratzl/chartjs-chart-boxplot@4.4.0/build/index.umd.min.js"></script>',
+        ),
+      );
+      expect(htmlContent, contains('function escapeHtml(str)'));
+      expect(htmlContent, contains(r'${escapeHtml(bench.name)}'));
+      expect(htmlContent, contains(r'${escapeHtml(alloc.className)}'));
+      expect(htmlContent, contains(r'${escapeHtml(func.name)}'));
+    });
+
+    test(
+      'escapes </script> in benchmark results within embedded JSON',
+      () async {
+        final config = CriterionConfig(
+          reportDir: tempDir.path,
+          generateHtmlReport: true,
+          exportJson: false,
+          useKbssd: false,
+        );
+
+        await criterion('XSS Test', (c) {
+          c.bench(
+            'bench_</script><script>alert(1)</script>',
+            () {},
+            samples: 5,
+            warmupDuration: Duration.zero,
+          );
+        }, config: config);
+
+        final htmlFile = File('${tempDir.path}/index.html');
+        expect(htmlFile.existsSync(), isTrue);
+
+        final htmlContent = htmlFile.readAsStringSync();
+        expect(
+          htmlContent,
+          contains(r'bench_<\/script><script>alert(1)<\/script>'),
+        );
+        expect(htmlContent, isNot(contains(r'bench_</script>')));
+      },
+    );
+
     test('creates reportDir recursively when it does not exist', () async {
       final nonExistentDir = '${tempDir.path}/deep/nested/report';
       final config = CriterionConfig(
@@ -277,6 +361,61 @@ void main() {
       expect(Directory(nonExistentDir).existsSync(), isTrue);
       expect(File('$nonExistentDir/results.json').existsSync(), isTrue);
     });
+    test(
+      'MeasurementResult.fromJson parses integer sampleTimes without TypeError',
+      () {
+        final json = {
+          "sampleTimes": [10, 20, 30],
+          "mean": 20,
+          "median": 20,
+          "stdDev": 5,
+          "meanCI": {"lowerBound": 15, "upperBound": 25},
+          "medianCI": {"lowerBound": 15, "upperBound": 25},
+          "outliers": {
+            "lowSevere": 0,
+            "lowMild": 0,
+            "highMild": 0,
+            "highSevere": 0,
+            "outlierVariancePercentage": 0,
+          },
+        };
+        final result = MeasurementResult.fromJson(json);
+        expect(result.sampleTimes, equals([10.0, 20.0, 30.0]));
+        expect(result.mean, equals(20.0));
+      },
+    );
+
+    test(
+      'HTML report uses object identity for deselection, name-first URL param lookup, and Math.abs in formatBytes',
+      () async {
+        final config = CriterionConfig(
+          reportDir: tempDir.path,
+          generateHtmlReport: true,
+          exportJson: false,
+          useKbssd: false,
+        );
+
+        await criterion('Report JS Logic Suite', (c) {
+          c.bench(
+            '10 items',
+            () {},
+            samples: 5,
+            warmupDuration: const Duration(milliseconds: 5),
+          );
+        }, config: config);
+
+        final htmlFile = File('${tempDir.path}/index.html');
+        expect(htmlFile.existsSync(), isTrue);
+
+        final htmlContent = htmlFile.readAsStringSync();
+        expect(
+          htmlContent,
+          contains('selectedBenchmarks.filter(b => b !== bench)'),
+        );
+        expect(htmlContent, contains(r'/^\d+$/.test('));
+        expect(htmlContent, contains('Math.abs(bytes) < 1024'));
+      },
+    );
   });
 }
 
