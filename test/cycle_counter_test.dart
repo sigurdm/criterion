@@ -46,6 +46,7 @@ void main() {
       generateHtmlReport: false,
       exportJson: false,
       useKbssd: false,
+      measureCycles: true,
     );
 
     final prints = <String>[];

@@ -87,6 +87,7 @@ void main() async {
 
         final result = await Process.run(runDart, [
           runScriptPath,
+          '--memory',
           dummyFile.path,
         ]);
 
@@ -546,6 +547,69 @@ void main() async {
       for (final item in jsonContent) {
         final primary = item['primary'] as Map<String, dynamic>;
         expect(primary['memory'], isNull);
+        expect(primary['instructions'], isNull);
+        expect(primary['cyclesPerIteration'], isNull);
+      }
+    });
+
+    test('CLI measures time only unless asked for more', () async {
+      final runDart = Platform.resolvedExecutable;
+
+      final result = await Process.run(runDart, [
+        'bin/run.dart',
+        '-f',
+        'jit',
+        '--json',
+        dummyFile.path,
+      ]);
+
+      expect(
+        result.exitCode,
+        equals(0),
+        reason: '${result.stdout}\n${result.stderr}',
+      );
+      final stdoutStr = result.stdout as String;
+      final jsonStart = stdoutStr.indexOf(RegExp(r'[\[\{]'));
+      expect(jsonStart, isNot(-1));
+
+      final jsonContent =
+          jsonDecode(stdoutStr.substring(jsonStart).trim()) as List;
+      expect(jsonContent, isNotEmpty);
+      for (final item in jsonContent) {
+        final primary = item['primary'] as Map<String, dynamic>;
+        expect(primary['memory'], isNull);
+        expect(primary['instructions'], isNull);
+        expect(primary['cyclesPerIteration'], isNull);
+      }
+    });
+
+    test('CLI --memory enables only the memory pass', () async {
+      final runDart = Platform.resolvedExecutable;
+
+      final result = await Process.run(runDart, [
+        'bin/run.dart',
+        '-f',
+        'jit',
+        '--json',
+        '--memory',
+        dummyFile.path,
+      ]);
+
+      expect(
+        result.exitCode,
+        equals(0),
+        reason: '${result.stdout}\n${result.stderr}',
+      );
+      final stdoutStr = result.stdout as String;
+      final jsonStart = stdoutStr.indexOf(RegExp(r'[\[\{]'));
+      expect(jsonStart, isNot(-1));
+
+      final jsonContent =
+          jsonDecode(stdoutStr.substring(jsonStart).trim()) as List;
+      expect(jsonContent, isNotEmpty);
+      for (final item in jsonContent) {
+        final primary = item['primary'] as Map<String, dynamic>;
+        expect(primary['memory'], isNotNull);
         expect(primary['instructions'], isNull);
         expect(primary['cyclesPerIteration'], isNull);
       }

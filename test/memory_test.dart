@@ -36,7 +36,9 @@ void main() {
 
       await runZonedGuarded(
         () async {
-          final c = Criterion();
+          final c = Criterion(
+            config: const CriterionConfig(measureMemory: true),
+          );
           c.bench(
             'allocations',
             () {

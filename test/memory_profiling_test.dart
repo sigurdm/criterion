@@ -27,6 +27,7 @@ void main() {
       generateHtmlReport: false,
       exportJson: false,
       useKbssd: false,
+      measureMemory: true,
     );
 
     final prints = <String>[];

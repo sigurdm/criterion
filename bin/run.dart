@@ -60,6 +60,24 @@ Future<void> main(List<String> args) async {
       help: 'Skip memory, instruction, and CPU cycle measurement passes.',
     )
     ..addFlag(
+      'all-metrics',
+      negatable: false,
+      help:
+          'Enable memory, instruction, and CPU cycle measurement. Each adds an '
+          'extra run of every benchmark function.',
+    )
+    ..addFlag(
+      'memory',
+      negatable: false,
+      help: 'Enable memory allocation measurement.',
+    )
+    ..addFlag(
+      'instructions',
+      negatable: false,
+      help: 'Enable hardware instruction measurement.',
+    )
+    ..addFlag('cycles', negatable: false, help: 'Enable CPU cycle measurement.')
+    ..addFlag(
       'no-memory',
       negatable: false,
       help: 'Skip memory allocation measurement.',
@@ -168,6 +186,10 @@ Future<void> main(List<String> args) async {
       : null;
   final noHtml = results['no-html'] as bool;
   final timingOnly = results['timing-only'] as bool;
+  final allMetrics = results['all-metrics'] as bool;
+  final memory = results['memory'] as bool;
+  final instructions = results['instructions'] as bool;
+  final cycles = results['cycles'] as bool;
   final noMemory = results['no-memory'] as bool;
   final noInstructions = results['no-instructions'] as bool;
   final noCycles = results['no-cycles'] as bool;
@@ -226,6 +248,10 @@ Future<void> main(List<String> args) async {
           warmupMs: warmupTime,
           noHtml: noHtml,
           timingOnly: timingOnly,
+          allMetrics: allMetrics,
+          memory: memory,
+          instructions: instructions,
+          cycles: cycles,
           noMemory: noMemory,
           noInstructions: noInstructions,
           noCycles: noCycles,

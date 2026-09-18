@@ -64,12 +64,22 @@ final class CriterionConfig {
   final int kbssdMaxSamples;
 
   /// Whether to measure memory allocations.
+  ///
+  /// Defaults to `false`. Enabling this runs each benchmark function an
+  /// additional time under allocation tracking, on top of the timing passes.
   final bool measureMemory;
 
   /// Whether to measure hardware instructions.
+  ///
+  /// Defaults to `false`. Enabling this runs each benchmark function an
+  /// additional time under `perf`-style counters, on top of the timing passes,
+  /// and is only supported where the native counter library is available.
   final bool measureInstructions;
 
   /// Whether to measure CPU cycles.
+  ///
+  /// Defaults to `false`. Enabling this runs each benchmark function an
+  /// additional time under the cycle counter, on top of the timing passes.
   final bool measureCycles;
 
   /// An optional regular expression pattern to filter benchmarks by name.
@@ -106,9 +116,9 @@ final class CriterionConfig {
     this.kbssdTrimPercentage = 0.10,
     this.kbssdScaleFactor = 2.0,
     this.kbssdMaxSamples = 200,
-    this.measureMemory = true,
-    this.measureInstructions = true,
-    this.measureCycles = true,
+    this.measureMemory = false,
+    this.measureInstructions = false,
+    this.measureCycles = false,
     this.filter,
     this.noiseThreshold = 0.01,
     this.saveBaseline,

@@ -91,9 +91,10 @@ final class Criterion {
         ? parsedNoise
         : base.noiseThreshold;
 
-    var measureMemory = base.measureMemory;
-    var measureInstructions = base.measureInstructions;
-    var measureCycles = base.measureCycles;
+    var measureMemory = base.measureMemory || env.allMetrics || env.memory;
+    var measureInstructions =
+        base.measureInstructions || env.allMetrics || env.instructions;
+    var measureCycles = base.measureCycles || env.allMetrics || env.cycles;
     var useKbssd = base.useKbssd;
 
     if (env.timingOnly) {

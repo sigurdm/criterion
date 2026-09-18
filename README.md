@@ -10,9 +10,9 @@ Criterion helps write precise benchmarks by accounting for JIT warm-up, garbage 
 *   **Outlier Analysis**: Detects outliers and calculates their impact on variance.
 *   **Adaptive Warm-up**: Automatically calibrates iterations. Supports KBSSD (Kernel-Based Steady-State Detection).
 *   **Parameterization**: Run the same benchmark over a range of inputs and plot complexity.
-*   **Resource Tracking**: Measures allocated bytes, object counts, RSS delta, and **detailed class-level allocations**.
-*   **CPU Cycles**: Counts CPU cycles using hardware performance counters (FFI-based).
-*   **CPU Instructions**: Counts CPU instructions on Linux (requires performance counter access).
+*   **Resource Tracking** (opt-in): Measures allocated bytes, object counts, RSS delta, and **detailed class-level allocations**.
+*   **CPU Cycles** (opt-in): Counts CPU cycles using hardware performance counters (FFI-based).
+*   **CPU Instructions** (opt-in): Counts CPU instructions on Linux (requires performance counter access).
 *   **CPU Profiling**: Optional CPU sampling profiling with Dart DevTools integration.
 *   **Historical Tracking**: Local database to detect regressions automatically.
 *   **Overhead Calibration**: Subtracts baseline harness overhead (e.g., FFI boundary cost).
@@ -208,7 +208,12 @@ await criterion(
     generateHtmlReport: true,
     exportJson: true,
     reportDir: 'benchmark/report',
-    
+
+    // Extra measurement passes (all off by default)
+    measureMemory: true,
+    measureInstructions: true,
+    measureCycles: true,
+
     // KBSSD (Kernel-Based Steady-State Detection)
     useKbssd: true,                  // Use KBSSD adaptive benchmarking (default: true)
     kbssdWindowSize: 15,
@@ -216,6 +221,24 @@ await criterion(
   ),
 );
 ```
+
+### Measuring more than time
+
+A default run measures time only. Allocation counts, hardware instruction
+counts and CPU cycle counts each require running every benchmark function an
+extra time, which multiplies the wall-clock cost of a suite, so they are
+opt-in.
+
+Enable them in `CriterionConfig` as above, or from the command line:
+
+```bash
+dart run criterion:run benchmark/ --all-metrics   # memory + instructions + cycles
+dart run criterion:run benchmark/ --memory        # just allocations
+```
+
+`--no-memory`, `--no-instructions`, `--no-cycles` and `--timing-only` still
+work and override whatever the suite's own config asks for, so you can strip a
+suite back to timing without editing it.
 
 ### KBSSD Adaptive Benchmarking
 By default, Criterion uses KBSSD as an **adaptive warm-up**. It monitors a sliding window of measurements and waits until the "past" and "present" windows become statistically indistinguishable — that is, until the benchmark has reached a steady state and the JIT, caches and allocator have settled.

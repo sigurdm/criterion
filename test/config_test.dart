@@ -21,6 +21,13 @@ void main() {
       expect(const CriterionConfig().validate, returnsNormally);
     });
 
+    test('measures time only by default', () {
+      const config = CriterionConfig();
+      expect(config.measureMemory, isFalse);
+      expect(config.measureInstructions, isFalse);
+      expect(config.measureCycles, isFalse);
+    });
+
     test('rejects out-of-range values and names the offending field', () {
       final cases = <String, CriterionConfig>{
         'kbssdWindowSize': const CriterionConfig(kbssdWindowSize: 0),

@@ -58,6 +58,19 @@ final class DartEnvironment {
   /// Whether all non-timing profilers are skipped from `CRITERION_TIMING_ONLY`.
   bool get timingOnly => const bool.fromEnvironment('CRITERION_TIMING_ONLY');
 
+  /// Whether every non-timing profiler is enabled from `CRITERION_ALL_METRICS`.
+  bool get allMetrics => const bool.fromEnvironment('CRITERION_ALL_METRICS');
+
+  /// Whether memory measurement is enabled from `CRITERION_MEMORY`.
+  bool get memory => const bool.fromEnvironment('CRITERION_MEMORY');
+
+  /// Whether hardware instruction measurement is enabled from
+  /// `CRITERION_INSTRUCTIONS`.
+  bool get instructions => const bool.fromEnvironment('CRITERION_INSTRUCTIONS');
+
+  /// Whether CPU cycle measurement is enabled from `CRITERION_CYCLES`.
+  bool get cycles => const bool.fromEnvironment('CRITERION_CYCLES');
+
   /// Whether memory measurement is disabled from `CRITERION_NO_MEMORY`.
   bool get noMemory => const bool.fromEnvironment('CRITERION_NO_MEMORY');
 
@@ -126,6 +139,18 @@ bool get noHtml => defaultEnvironment.noHtml;
 /// Whether all non-timing profilers are skipped.
 bool get timingOnly => defaultEnvironment.timingOnly;
 
+/// Whether every non-timing profiler is enabled.
+bool get allMetrics => defaultEnvironment.allMetrics;
+
+/// Whether memory measurement is enabled.
+bool get memory => defaultEnvironment.memory;
+
+/// Whether hardware instruction measurement is enabled.
+bool get instructions => defaultEnvironment.instructions;
+
+/// Whether CPU cycle measurement is enabled.
+bool get cycles => defaultEnvironment.cycles;
+
 /// Whether memory measurement is disabled.
 bool get noMemory => defaultEnvironment.noMemory;
 
@@ -159,6 +184,10 @@ List<String> dartDefineFlags({
   int? warmupMs,
   bool noHtml = false,
   bool timingOnly = false,
+  bool allMetrics = false,
+  bool memory = false,
+  bool instructions = false,
+  bool cycles = false,
   bool noMemory = false,
   bool noInstructions = false,
   bool noCycles = false,
@@ -179,6 +208,10 @@ List<String> dartDefineFlags({
     if (warmupMs != null) "--define=CRITERION_WARMUP_MS=$warmupMs",
     if (noHtml) "--define=CRITERION_NO_HTML=true",
     if (timingOnly) "--define=CRITERION_TIMING_ONLY=true",
+    if (allMetrics) "--define=CRITERION_ALL_METRICS=true",
+    if (memory) "--define=CRITERION_MEMORY=true",
+    if (instructions) "--define=CRITERION_INSTRUCTIONS=true",
+    if (cycles) "--define=CRITERION_CYCLES=true",
     if (noMemory) "--define=CRITERION_NO_MEMORY=true",
     if (noInstructions) "--define=CRITERION_NO_INSTRUCTIONS=true",
     if (noCycles) "--define=CRITERION_NO_CYCLES=true",
