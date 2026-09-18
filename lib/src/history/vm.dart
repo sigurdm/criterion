@@ -123,15 +123,23 @@ final class HistoryManager {
 
 /// Checks for regressions between [current] results and [history].
 ///
-/// Prints warnings to stdout if a regression is detected.
-/// Returns `true` if any regressions are detected, `false` otherwise.
-bool checkRegressions({
+/// Only the most recent historical result for each benchmark is used as the
+/// baseline. A benchmark counts as regressed when it got slower by a
+/// statistically significant margin that also exceeds [noiseThreshold]; see
+/// [compareResults].
+///
+/// Prints a warning to stdout for each regression, naming [baselineLabel] if
+/// one was given.
+///
+/// Returns the regressing comparisons, newest baseline versus current. The
+/// list is empty when [history] is empty or nothing regressed.
+List<BenchmarkComparison> checkRegressions({
   required List<BenchmarkResult> current,
   required List<BenchmarkResult> history,
   double noiseThreshold = 0.01,
   String? baselineLabel,
 }) {
-  if (history.isEmpty) return false;
+  if (history.isEmpty) return const [];
 
   // Group history by benchmark key (name + platform + parameterValue)
   // and find the latest result for each key.
@@ -164,7 +172,7 @@ bool checkRegressions({
     );
   }
 
-  return comparison.regressions.isNotEmpty;
+  return comparison.regressions;
 }
 
 String _historyKey(BenchmarkResult r) {

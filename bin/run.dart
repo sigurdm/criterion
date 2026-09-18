@@ -18,6 +18,7 @@ import 'dart:io';
 import 'package:args/args.dart';
 import 'package:criterion/criterion.dart';
 import 'package:criterion/src/dart_environment.dart' as env_helpers;
+import 'package:criterion/src/report_generator.dart';
 import 'package:node_preamble/preamble.dart' as node_preamble;
 
 Future<void> main(List<String> args) async {

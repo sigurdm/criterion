@@ -15,6 +15,7 @@
 import "dart:io";
 import "package:args/args.dart";
 import "package:criterion/criterion.dart";
+import "package:criterion/src/report_generator.dart";
 
 void main(List<String> arguments) async {
   final parser = ArgParser()

@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+import '../comparison.dart';
 import '../result.dart';
 
 /// Stub implementation of HistoryManager when VM/IO is not available.
@@ -38,10 +39,10 @@ final class HistoryManager {
   Future<List<BenchmarkResult>> loadNamedBaseline(String name) async => [];
 }
 
-/// No-op.
-bool checkRegressions({
+/// No-op; always reports no regressions.
+List<BenchmarkComparison> checkRegressions({
   required List<BenchmarkResult> current,
   required List<BenchmarkResult> history,
   double noiseThreshold = 0.01,
   String? baselineLabel,
-}) => false;
+}) => const [];

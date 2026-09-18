@@ -16,6 +16,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:criterion/criterion.dart';
 import 'package:criterion/src/cycle_counter.dart';
+import 'package:criterion/src/report_generator.dart';
 import 'package:test/test.dart';
 
 void main() {

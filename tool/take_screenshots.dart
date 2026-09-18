@@ -14,6 +14,7 @@
 
 import 'dart:io';
 import 'package:criterion/criterion.dart';
+import 'package:criterion/src/report_generator.dart';
 import 'package:path/path.dart' as p;
 import 'package:puppeteer/puppeteer.dart';
 

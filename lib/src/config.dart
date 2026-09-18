@@ -90,13 +90,8 @@ final class CriterionConfig {
 
   /// Creates a new [CriterionConfig] instance.
   ///
-  /// It is an error if:
-  /// * [kbssdWindowSize] is less than 1.
-  /// * [kbssdStabilityRequired] is less than 1.
-  /// * [kbssdTrimPercentage] is not between 0.0 (inclusive) and 0.5 (exclusive).
-  /// * [kbssdScaleFactor] is less than or equal to 0.0.
-  /// * [kbssdMaxSamples] is less than double of [kbssdWindowSize].
-  /// * [noiseThreshold] is negative.
+  /// This constructor is `const` and performs no validation; call [validate]
+  /// to check the field values. `Criterion.run` does so automatically.
   const CriterionConfig({
     this.generateHtmlReport = true,
     this.exportJson = true,
@@ -119,21 +114,66 @@ final class CriterionConfig {
     this.saveBaseline,
     this.baseline,
     this.failOnRegression = false,
-  }) : assert(kbssdWindowSize >= 1, 'kbssdWindowSize must be >= 1'),
-       assert(
-         kbssdStabilityRequired >= 1,
-         'kbssdStabilityRequired must be >= 1',
-       ),
-       assert(
-         kbssdTrimPercentage >= 0.0 && kbssdTrimPercentage < 0.5,
-         'kbssdTrimPercentage must be in [0.0, 0.5)',
-       ),
-       assert(kbssdScaleFactor > 0.0, 'kbssdScaleFactor must be > 0.0'),
-       assert(
-         kbssdMaxSamples >= kbssdWindowSize * 2,
-         'kbssdMaxSamples must be >= kbssdWindowSize * 2',
-       ),
-       assert(noiseThreshold >= 0.0, 'noiseThreshold must be >= 0.0');
+  });
+
+  /// Checks that all field values are in range.
+  ///
+  /// `Criterion.run` calls this before doing any work, so a misconfigured run
+  /// fails immediately rather than after minutes of measurement. Validation is
+  /// a separate method rather than a constructor `assert` because the
+  /// constructor is `const`, and because asserts are stripped from release and
+  /// AOT builds — which is exactly where values arrive from `-D` defines and
+  /// command-line flags.
+  ///
+  /// Throws an [ArgumentError] if:
+  /// * [kbssdWindowSize] is less than 1.
+  /// * [kbssdStabilityRequired] is less than 1.
+  /// * [kbssdTrimPercentage] is not in `[0.0, 0.5)`.
+  /// * [kbssdScaleFactor] is less than or equal to 0.0.
+  /// * [kbssdMaxSamples] is less than twice [kbssdWindowSize].
+  /// * [noiseThreshold] is negative.
+  void validate() {
+    void check(bool ok, Object? value, String name, String message) {
+      if (!ok) throw ArgumentError.value(value, name, message);
+    }
+
+    check(
+      kbssdWindowSize >= 1,
+      kbssdWindowSize,
+      'kbssdWindowSize',
+      'Must be >= 1',
+    );
+    check(
+      kbssdStabilityRequired >= 1,
+      kbssdStabilityRequired,
+      'kbssdStabilityRequired',
+      'Must be >= 1',
+    );
+    check(
+      kbssdTrimPercentage >= 0.0 && kbssdTrimPercentage < 0.5,
+      kbssdTrimPercentage,
+      'kbssdTrimPercentage',
+      'Must be in [0.0, 0.5)',
+    );
+    check(
+      kbssdScaleFactor > 0.0,
+      kbssdScaleFactor,
+      'kbssdScaleFactor',
+      'Must be > 0.0',
+    );
+    check(
+      kbssdMaxSamples >= kbssdWindowSize * 2,
+      kbssdMaxSamples,
+      'kbssdMaxSamples',
+      'Must be >= kbssdWindowSize * 2 (${kbssdWindowSize * 2})',
+    );
+    check(
+      noiseThreshold >= 0.0,
+      noiseThreshold,
+      'noiseThreshold',
+      'Must be >= 0.0',
+    );
+  }
 
   /// Creates a copy of this configuration with the given fields replaced.
   CriterionConfig copyWith({

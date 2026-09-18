@@ -19,6 +19,7 @@ import 'statistics.dart';
 import 'memory_measurement.dart';
 import 'instruction_measurement.dart';
 import 'config.dart';
+import 'comparison.dart';
 import 'kbssd_math.dart';
 import 'result.dart';
 import 'report_generator.dart';
@@ -439,6 +440,7 @@ final class Criterion {
 
   /// Runs all registered benchmarks and reports their results.
   Future<List<BenchmarkResult>> run() async {
+    effectiveConfig.validate();
     if (effectiveConfig.measureCycles) {
       await CycleCounter.init();
     }
@@ -466,30 +468,28 @@ final class Criterion {
       history = await historyMgr.load();
     }
 
-    var hasRegressions = false;
+    var regressions = const <BenchmarkComparison>[];
+    String? regressionBaselineLabel;
 
     if (!env.isJson && effectiveConfig.baseline != null) {
       final baselineResults = await historyMgr.loadNamedBaseline(
         effectiveConfig.baseline!,
       );
-      if (checkRegressions(
+      regressions = checkRegressions(
         current: results,
         history: baselineResults,
         noiseThreshold: effectiveConfig.noiseThreshold,
         baselineLabel: effectiveConfig.baseline,
-      )) {
-        hasRegressions = true;
-      }
+      );
+      regressionBaselineLabel = effectiveConfig.baseline;
     } else if (!env.isJson &&
         effectiveConfig.checkRegressions &&
         history != null) {
-      if (checkRegressions(
+      regressions = checkRegressions(
         current: results,
         history: history,
         noiseThreshold: effectiveConfig.noiseThreshold,
-      )) {
-        hasRegressions = true;
-      }
+      );
     }
 
     if (!env.isJson && effectiveConfig.saveBaseline != null) {
@@ -514,8 +514,11 @@ final class Criterion {
       await historyMgr.save(fullHistory);
     }
 
-    if (effectiveConfig.failOnRegression && hasRegressions) {
-      throw StateError('Performance regressions detected.');
+    if (effectiveConfig.failOnRegression && regressions.isNotEmpty) {
+      throw RegressionDetected(
+        regressions,
+        baselineLabel: regressionBaselineLabel,
+      );
     }
 
     return results;

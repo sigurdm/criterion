@@ -17,6 +17,59 @@ import "dart:math" as math;
 import "result.dart";
 import "statistics.dart";
 
+/// Thrown when a benchmark run detects a statistically significant
+/// performance regression and [CriterionConfig.failOnRegression] is enabled.
+///
+/// This is an expected outcome of a benchmark run rather than a programming
+/// error, so it is an [Exception] and is meant to be caught:
+///
+/// ```dart
+/// try {
+///   await criterion('My Suite', (c) { ... }, config: config);
+/// } on RegressionDetected catch (e) {
+///   for (final r in e.regressions) {
+///     print('${r.name} regressed by ${r.time.percentDiff}%');
+///   }
+///   exitCode = 1;
+/// }
+/// ```
+final class RegressionDetected implements Exception {
+  /// The benchmarks that regressed, comparing the baseline against this run.
+  ///
+  /// Never empty.
+  final List<BenchmarkComparison> regressions;
+
+  /// The name of the baseline that was compared against, if a named baseline
+  /// was used rather than the run history.
+  final String? baselineLabel;
+
+  /// Creates a [RegressionDetected].
+  ///
+  /// It is an error if [regressions] is empty.
+  RegressionDetected(
+    List<BenchmarkComparison> regressions, {
+    this.baselineLabel,
+  }) : regressions = List.unmodifiable(regressions) {
+    if (regressions.isEmpty) {
+      throw ArgumentError.value(
+        regressions,
+        'regressions',
+        'Must not be empty',
+      );
+    }
+  }
+
+  @override
+  String toString() {
+    final against = baselineLabel != null
+        ? ' against baseline "$baselineLabel"'
+        : '';
+    final names = regressions.map((r) => r.name).join(', ');
+    return 'RegressionDetected: ${regressions.length} benchmark(s) regressed'
+        '$against: $names';
+  }
+}
+
 /// Represents the comparison of a single metric.
 final class MetricComparison {
   /// The value before.

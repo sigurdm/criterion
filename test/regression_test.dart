@@ -220,7 +220,7 @@ void main() {
     });
 
     test(
-      'failOnRegression in Criterion.run throws StateError when regression occurs',
+      'failOnRegression in Criterion.run throws RegressionDetected when a regression occurs',
       () async {
         final tempDir = Directory.systemTemp.createTempSync(
           'criterion_fail_reg_',
@@ -286,7 +286,18 @@ void main() {
           warmupDuration: Duration(milliseconds: 10),
         );
 
-        expect(c.run(), throwsA(isA<StateError>()));
+        await expectLater(
+          c.run(),
+          throwsA(
+            isA<RegressionDetected>()
+                .having(
+                  (e) => e.regressions.map((r) => r.name),
+                  'regressions',
+                  contains('regression_target'),
+                )
+                .having((e) => e.baselineLabel, 'baselineLabel', 'golden'),
+          ),
+        );
       },
     );
 
