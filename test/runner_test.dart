@@ -416,4 +416,233 @@ void main() async {
       expect(benchmarkResult['platform'], equals('wasm'));
     });
   });
+  group('CLI Filtering, Quick Mode, Timing Only, and Suite Discovery', () {
+    late File dummyFile;
+    late Directory tempDir;
+
+    setUp(() {
+      tempDir = Directory('test/temp_runner_feature_dir');
+      if (tempDir.existsSync()) {
+        tempDir.deleteSync(recursive: true);
+      }
+      tempDir.createSync(recursive: true);
+      dummyFile = File('${tempDir.path}/test_benchmarks.dart');
+      dummyFile.writeAsStringSync('''
+import 'package:criterion/criterion.dart';
+
+void main() async {
+  await criterion(
+    'FeatureSuite',
+    (c) {
+      c.bench('apple_bench', () {}, samples: 5, warmupDuration: Duration(milliseconds: 5));
+      c.bench('banana_bench', () {}, samples: 5, warmupDuration: Duration(milliseconds: 5));
+      c.bench('cherry_bench', () {}, samples: 5, warmupDuration: Duration(milliseconds: 5));
+    },
+    config: CriterionConfig(exportJson: false, generateHtmlReport: false),
+  );
+}
+''');
+    });
+
+    tearDown(() {
+      try {
+        if (tempDir.existsSync()) {
+          tempDir.deleteSync(recursive: true);
+        }
+      } catch (e) {
+        print('Warning: cleanup failed: $e');
+      }
+    });
+
+    test('CLI --filter (-k) filters executed benchmarks', () async {
+      final runDart = Platform.resolvedExecutable;
+      final runScriptPath = 'bin/run.dart';
+
+      final result = await Process.run(runDart, [
+        runScriptPath,
+        '-f',
+        'jit',
+        '--json',
+        '--filter=banana',
+        dummyFile.path,
+      ]);
+
+      expect(
+        result.exitCode,
+        equals(0),
+        reason: '${result.stdout}\n${result.stderr}',
+      );
+      final stdoutStr = result.stdout as String;
+      final jsonStart = stdoutStr.indexOf(RegExp(r'[\[\{]'));
+      expect(jsonStart, isNot(-1));
+
+      final jsonContent =
+          jsonDecode(stdoutStr.substring(jsonStart).trim()) as List;
+      expect(jsonContent.length, equals(1));
+      expect(jsonContent.first['name'], equals('banana_bench'));
+    });
+
+    test(
+      'CLI --quick (-q) runs fast timing-only pass with profilers skipped',
+      () async {
+        final runDart = Platform.resolvedExecutable;
+        final runScriptPath = 'bin/run.dart';
+
+        final result = await Process.run(runDart, [
+          runScriptPath,
+          '-f',
+          'jit',
+          '--json',
+          '-q',
+          dummyFile.path,
+        ]);
+
+        expect(
+          result.exitCode,
+          equals(0),
+          reason: '${result.stdout}\n${result.stderr}',
+        );
+        final stdoutStr = result.stdout as String;
+        final jsonStart = stdoutStr.indexOf(RegExp(r'[\[\{]'));
+        expect(jsonStart, isNot(-1));
+
+        final jsonContent =
+            jsonDecode(stdoutStr.substring(jsonStart).trim()) as List;
+        expect(jsonContent.length, equals(3));
+        for (final item in jsonContent) {
+          final primary = item['primary'] as Map<String, dynamic>;
+          expect(primary['memory'], isNull);
+          expect(primary['instructions'], isNull);
+          expect(primary['cyclesPerIteration'], isNull);
+        }
+      },
+    );
+
+    test('CLI --timing-only skips secondary profilers', () async {
+      final runDart = Platform.resolvedExecutable;
+      final runScriptPath = 'bin/run.dart';
+
+      final result = await Process.run(runDart, [
+        runScriptPath,
+        '-f',
+        'jit',
+        '--json',
+        '--timing-only',
+        dummyFile.path,
+      ]);
+
+      expect(
+        result.exitCode,
+        equals(0),
+        reason: '${result.stdout}\n${result.stderr}',
+      );
+      final stdoutStr = result.stdout as String;
+      final jsonStart = stdoutStr.indexOf(RegExp(r'[\[\{]'));
+      expect(jsonStart, isNot(-1));
+
+      final jsonContent =
+          jsonDecode(stdoutStr.substring(jsonStart).trim()) as List;
+      expect(jsonContent.length, equals(3));
+      for (final item in jsonContent) {
+        final primary = item['primary'] as Map<String, dynamic>;
+        expect(primary['memory'], isNull);
+        expect(primary['instructions'], isNull);
+        expect(primary['cyclesPerIteration'], isNull);
+      }
+    });
+
+    test(
+      'CLI benchmark discovery when no arguments provided defaults to benchmark/ directory',
+      () async {
+        final runDart = Platform.resolvedExecutable;
+        final runScriptPath = 'bin/run.dart';
+
+        final result = await Process.run(runDart, [
+          runScriptPath,
+          '-f',
+          'jit',
+          '--json',
+          '--quick',
+          '--filter=Integer',
+        ]);
+
+        expect(
+          result.exitCode,
+          equals(0),
+          reason: '${result.stdout}\n${result.stderr}',
+        );
+        final stdoutStr = result.stdout as String;
+        final jsonStart = stdoutStr.indexOf(RegExp(r'[\[\{]'));
+        expect(jsonStart, isNot(-1));
+
+        final jsonContent =
+            jsonDecode(stdoutStr.substring(jsonStart).trim()) as List;
+        expect(jsonContent, isNotEmpty);
+        expect(jsonContent.first['name'], contains('Integer'));
+      },
+    );
+
+    test(
+      'CLI benchmark discovery when directory is supplied as argument',
+      () async {
+        final subDir = Directory('${tempDir.path}/suite_dir')..createSync();
+        final file1 = File('${subDir.path}/bench_one.dart');
+        final file2 = File('${subDir.path}/bench_two.dart');
+
+        file1.writeAsStringSync('''
+import 'package:criterion/criterion.dart';
+
+void main() async {
+  await criterion(
+    'SuiteA',
+    (c) {
+      c.bench('bench_from_one', () {}, samples: 5, warmupDuration: Duration(milliseconds: 5));
+    },
+    config: CriterionConfig(exportJson: false, generateHtmlReport: false),
+  );
+}
+''');
+
+        file2.writeAsStringSync('''
+import 'package:criterion/criterion.dart';
+
+void main() async {
+  await criterion(
+    'SuiteB',
+    (c) {
+      c.bench('bench_from_two', () {}, samples: 5, warmupDuration: Duration(milliseconds: 5));
+    },
+    config: CriterionConfig(exportJson: false, generateHtmlReport: false),
+  );
+}
+''');
+
+        final runDart = Platform.resolvedExecutable;
+        final runScriptPath = 'bin/run.dart';
+
+        final result = await Process.run(runDart, [
+          runScriptPath,
+          '-f',
+          'jit',
+          '--json',
+          subDir.path,
+        ]);
+
+        expect(
+          result.exitCode,
+          equals(0),
+          reason: '${result.stdout}\n${result.stderr}',
+        );
+        final stdoutStr = result.stdout as String;
+        final jsonStart = stdoutStr.indexOf(RegExp(r'[\[\{]'));
+        expect(jsonStart, isNot(-1));
+
+        final jsonContent =
+            jsonDecode(stdoutStr.substring(jsonStart).trim()) as List;
+        expect(jsonContent.length, equals(2));
+        final names = jsonContent.map((r) => r['name']).toList();
+        expect(names, containsAll(['bench_from_one', 'bench_from_two']));
+      },
+    );
+  });
 }

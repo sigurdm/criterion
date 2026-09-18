@@ -27,10 +27,21 @@ final class HistoryManager {
 
   /// No-op.
   Future<void> save(List<BenchmarkResult> history) async {}
+
+  /// No-op.
+  Future<void> saveNamedBaseline(
+    String name,
+    List<BenchmarkResult> results,
+  ) async {}
+
+  /// Always returns an empty list.
+  Future<List<BenchmarkResult>> loadNamedBaseline(String name) async => [];
 }
 
 /// No-op.
-void checkRegressions({
+bool checkRegressions({
   required List<BenchmarkResult> current,
   required List<BenchmarkResult> history,
-}) {}
+  double noiseThreshold = 0.01,
+  String? baselineLabel,
+}) => false;

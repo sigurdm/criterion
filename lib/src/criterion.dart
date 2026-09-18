@@ -64,11 +64,71 @@ final class Criterion {
   /// The configuration for this Criterion instance.
   final CriterionConfig config;
 
+  /// The effective configuration taking environment overrides into account.
+  final CriterionConfig effectiveConfig;
+
   /// The list of registered benchmarks.
   List<Benchmark> get benchmarks => List.unmodifiable(_benchmarks);
 
   /// Creates a new [Criterion] instance.
-  Criterion({this.suiteName, this.config = const CriterionConfig()});
+  Criterion({this.suiteName, this.config = const CriterionConfig()})
+    : effectiveConfig = _computeEffectiveConfig(config);
+
+  static CriterionConfig _computeEffectiveConfig(CriterionConfig base) {
+    final effectiveFilter = env.filter.isNotEmpty ? env.filter : base.filter;
+    final effectiveHtml = env.noHtml ? false : base.generateHtmlReport;
+    final effectiveSaveBaseline = env.saveBaseline.isNotEmpty
+        ? env.saveBaseline
+        : base.saveBaseline;
+    final effectiveBaseline = env.baseline.isNotEmpty
+        ? env.baseline
+        : base.baseline;
+    final effectiveFailOnRegression =
+        env.failOnRegression || base.failOnRegression;
+    final parsedNoise = double.tryParse(env.noiseThreshold);
+    final effectiveNoiseThreshold = (parsedNoise != null && parsedNoise >= 0.0)
+        ? parsedNoise
+        : base.noiseThreshold;
+
+    var measureMemory = base.measureMemory;
+    var measureInstructions = base.measureInstructions;
+    var measureCycles = base.measureCycles;
+    var useKbssd = base.useKbssd;
+
+    if (env.timingOnly) {
+      measureMemory = false;
+      measureInstructions = false;
+      measureCycles = false;
+    }
+    if (env.noMemory) {
+      measureMemory = false;
+    }
+    if (env.noInstructions) {
+      measureInstructions = false;
+    }
+    if (env.noCycles) {
+      measureCycles = false;
+    }
+    if (env.isQuick) {
+      useKbssd = false;
+      measureMemory = false;
+      measureInstructions = false;
+      measureCycles = false;
+    }
+
+    return base.copyWith(
+      filter: effectiveFilter,
+      generateHtmlReport: effectiveHtml,
+      useKbssd: useKbssd,
+      measureMemory: measureMemory,
+      measureInstructions: measureInstructions,
+      measureCycles: measureCycles,
+      saveBaseline: effectiveSaveBaseline,
+      baseline: effectiveBaseline,
+      failOnRegression: effectiveFailOnRegression,
+      noiseThreshold: effectiveNoiseThreshold,
+    );
+  }
 
   /// Registers a benchmark.
   ///
@@ -98,8 +158,14 @@ final class Criterion {
     Function? noOp,
     Throughput? throughput,
     FutureOr<T> Function()? setup,
+    FutureOr<void> Function(T state)? teardown,
     BatchSize? batchSize,
   }) {
+    if (setup == null && teardown != null) {
+      throw ArgumentError(
+        'teardown can only be provided when setup is provided',
+      );
+    }
     if (setup != null) {
       if (fn is Function()) {
         throw ArgumentError(
@@ -122,11 +188,12 @@ final class Criterion {
           'noOp must not accept any parameters when setup is not provided',
         );
       }
-      if (batchSize != null) {
-        throw ArgumentError(
-          'batchSize can only be provided when setup is provided',
-        );
-      }
+    }
+
+    if (setup == null && batchSize != null) {
+      throw ArgumentError(
+        'batchSize can only be provided when setup is provided',
+      );
     }
 
     final fullName = _groupPath.isEmpty
@@ -136,12 +203,13 @@ final class Criterion {
       Benchmark<T>(
         fullName,
         fn,
-        config: config,
+        config: effectiveConfig,
         samples: samples,
         warmupDuration: warmupDuration,
         noOp: noOp,
         throughput: throughput,
         setup: setup,
+        teardown: teardown,
         batchSize: batchSize,
       ),
     );
@@ -173,7 +241,7 @@ final class Criterion {
   ///
   /// The [samples], [warmupDuration], and [throughput] apply to all variants in the group.
   ///
-  /// Throws [ArgumentError] if the signature of any variant function does not match
+  /// Throws [ArgumentError] if any variant function signature does not match
   /// the requirements based on [setup] presence.
   void variants<T>(
     String groupName,
@@ -182,8 +250,14 @@ final class Criterion {
     Duration warmupDuration = const Duration(seconds: 1),
     Throughput? throughput,
     FutureOr<T> Function()? setup,
+    FutureOr<void> Function(T state)? teardown,
     BatchSize? batchSize,
   }) {
+    if (setup == null && teardown != null) {
+      throw ArgumentError(
+        'teardown can only be provided when setup is provided',
+      );
+    }
     variants.forEach((variantName, fn) {
       if (setup != null) {
         if (fn is Function()) {
@@ -216,13 +290,14 @@ final class Criterion {
         Benchmark<T>(
           fullName,
           fn,
-          config: config,
+          config: effectiveConfig,
           samples: samples,
           warmupDuration: warmupDuration,
           variantGroup: groupName,
           variantName: variantName,
           throughput: throughput,
           setup: setup,
+          teardown: teardown,
           batchSize: batchSize,
         ),
       );
@@ -252,8 +327,14 @@ final class Criterion {
     Function? noOp,
     Throughput Function(P param)? throughput,
     FutureOr<T> Function(P param)? setup,
+    FutureOr<void> Function(T state)? teardown,
     BatchSize? batchSize,
   }) {
+    if (setup == null && teardown != null) {
+      throw ArgumentError(
+        'teardown can only be provided when setup is provided',
+      );
+    }
     if (setup == null && batchSize != null) {
       throw ArgumentError(
         'batchSize can only be provided when setup is provided',
@@ -278,7 +359,6 @@ final class Criterion {
         } else if (fn is Function(T)) {
           wrappedFn = fn;
         } else if (fn is Function(dynamic, dynamic)) {
-          // Fallback for dynamic types
           wrappedFn = (T state) => fn(state, p);
         } else if (fn is Function(dynamic)) {
           wrappedFn = fn;
@@ -342,12 +422,13 @@ final class Criterion {
         Benchmark<T>(
           fullName,
           wrappedFn,
-          config: config,
+          config: effectiveConfig,
           samples: samples,
           warmupDuration: warmupDuration,
           noOp: wrappedNoOp,
           throughput: tp,
           setup: wrappedSetup,
+          teardown: teardown,
           batchSize: batchSize,
           parameterGroup: groupName,
           parameterValue: p,
@@ -358,26 +439,64 @@ final class Criterion {
 
   /// Runs all registered benchmarks and reports their results.
   Future<List<BenchmarkResult>> run() async {
-    await CycleCounter.init();
+    if (effectiveConfig.measureCycles) {
+      await CycleCounter.init();
+    }
+    final filterPattern = effectiveConfig.filter;
+    final benchmarksToRun = (filterPattern != null && filterPattern.isNotEmpty)
+        ? _benchmarks
+              .where((b) => RegExp(filterPattern).hasMatch(b.name))
+              .toList()
+        : _benchmarks;
+
     final results = <BenchmarkResult>[];
-    for (final benchmark in _benchmarks) {
+    for (final benchmark in benchmarksToRun) {
       final result = await benchmark.run();
       results.add(result);
     }
     Blackhole.preventDCE();
 
-    final historyMgr = HistoryManager(config.historyFile);
+    final historyMgr = HistoryManager(effectiveConfig.historyFile);
     List<BenchmarkResult>? history;
 
     if (!env.isJson &&
-        (config.checkRegressions ||
-            config.exportHistory ||
-            config.generateHtmlReport)) {
+        (effectiveConfig.checkRegressions ||
+            effectiveConfig.exportHistory ||
+            effectiveConfig.generateHtmlReport)) {
       history = await historyMgr.load();
     }
 
-    if (!env.isJson && config.checkRegressions && history != null) {
-      checkRegressions(current: results, history: history);
+    var hasRegressions = false;
+
+    if (!env.isJson && effectiveConfig.baseline != null) {
+      final baselineResults = await historyMgr.loadNamedBaseline(
+        effectiveConfig.baseline!,
+      );
+      if (checkRegressions(
+        current: results,
+        history: baselineResults,
+        noiseThreshold: effectiveConfig.noiseThreshold,
+        baselineLabel: effectiveConfig.baseline,
+      )) {
+        hasRegressions = true;
+      }
+    } else if (!env.isJson &&
+        effectiveConfig.checkRegressions &&
+        history != null) {
+      if (checkRegressions(
+        current: results,
+        history: history,
+        noiseThreshold: effectiveConfig.noiseThreshold,
+      )) {
+        hasRegressions = true;
+      }
+    }
+
+    if (!env.isJson && effectiveConfig.saveBaseline != null) {
+      await historyMgr.saveNamedBaseline(
+        effectiveConfig.saveBaseline!,
+        results,
+      );
     }
 
     final fullHistory = history != null ? [...history, ...results] : results;
@@ -386,13 +505,17 @@ final class Criterion {
       print(jsonEncode(results.map((r) => r.toJson()).toList()));
     } else {
       await ReportGenerator(
-        config,
+        effectiveConfig,
       ).generate(results, history: fullHistory, suiteName: suiteName);
       _printVariantComparisons(results);
     }
 
-    if (!env.isJson && config.exportHistory && history != null) {
+    if (!env.isJson && effectiveConfig.exportHistory && history != null) {
       await historyMgr.save(fullHistory);
+    }
+
+    if (effectiveConfig.failOnRegression && hasRegressions) {
+      throw StateError('Performance regressions detected.');
     }
 
     return results;
@@ -512,6 +635,9 @@ final class Benchmark<T> {
   /// The setup function, if any.
   final FutureOr<T> Function()? setup;
 
+  /// The teardown function, if any.
+  final FutureOr<void> Function(T state)? teardown;
+
   /// The batch size configuration.
   final BatchSize batchSize;
 
@@ -550,15 +676,35 @@ final class Benchmark<T> {
     this.parameterValue,
     this.throughput,
     this.setup,
+    this.teardown,
     BatchSize? batchSize,
   }) : batchSize =
            batchSize ??
            (setup != null ? BatchSize.smallInput : BatchSize.unbatched) {
+    if (setup == null && teardown != null) {
+      throw ArgumentError(
+        'teardown can only be provided when setup is provided',
+      );
+    }
     if (setup == null && batchSize != null) {
       throw ArgumentError(
         'batchSize can only be provided when setup is provided',
       );
     }
+  }
+
+  int get _effectiveSamples {
+    if (env.samplesOverride > 0) return env.samplesOverride;
+    if (env.isQuick) return 10;
+    return samples;
+  }
+
+  Duration get _effectiveWarmupDuration {
+    if (env.warmupMsOverride >= 0) {
+      return Duration(milliseconds: env.warmupMsOverride);
+    }
+    if (env.isQuick) return const Duration(milliseconds: 50);
+    return warmupDuration;
   }
 
   /// Executes the warm-up, calibration, sampling, statistical analysis,
@@ -569,16 +715,17 @@ final class Benchmark<T> {
     }
 
     final hasNoOp = noOp != null;
+    final effectiveWarmup = _effectiveWarmupDuration;
 
     // 1. Warm-up
     if (!config.useKbssd) {
-      await _warmup(fn);
+      await _warmup(fn, effectiveWarmup);
       if (hasNoOp) {
-        await _warmup(noOp!);
+        await _warmup(noOp!, effectiveWarmup);
       }
-    } else if (warmupDuration > Duration.zero) {
-      final shortWarmup = warmupDuration < const Duration(milliseconds: 50)
-          ? warmupDuration
+    } else if (effectiveWarmup > Duration.zero) {
+      final shortWarmup = effectiveWarmup < const Duration(milliseconds: 50)
+          ? effectiveWarmup
           : const Duration(milliseconds: 50);
       await _warmup(fn, shortWarmup);
       if (hasNoOp) {
@@ -615,7 +762,7 @@ final class Benchmark<T> {
     }
 
     // 5. Output warning footnote if instructions are unsupported (one-time)
-    if (!env.isJson) {
+    if (!env.isJson && config.measureInstructions) {
       _checkAndPrintFootnote();
     }
 
@@ -742,24 +889,34 @@ final class Benchmark<T> {
     final bootstrapResult = sample.bootstrap();
     final outlierAnalysis = sample.analyzeOutliers();
 
+    final teardownDynamic = teardown != null
+        ? (dynamic s) => teardown!(s as T)
+        : null;
+
     // Memory Measurement
     final memoryIterations = setup != null
         ? iterations.clamp(1, 1000)
         : iterations.clamp(100, 10000);
-    final memoryResult = await MemoryMeasurer.measure(
-      fn: targetFn,
-      iterations: memoryIterations,
-      setup: setup,
-      batchSize: batchSize,
-    );
+    final memoryResult = config.measureMemory
+        ? await MemoryMeasurer.measure(
+            fn: targetFn,
+            iterations: memoryIterations,
+            setup: setup,
+            teardown: teardownDynamic,
+            batchSize: batchSize,
+          )
+        : null;
 
     // Instruction Measurement
-    final instructionResult = await InstructionMeasurer.measure(
-      fn: targetFn,
-      iterations: memoryIterations,
-      setup: setup,
-      batchSize: batchSize,
-    );
+    final instructionResult = config.measureInstructions
+        ? await InstructionMeasurer.measure(
+            fn: targetFn,
+            iterations: memoryIterations,
+            setup: setup,
+            teardown: teardownDynamic,
+            batchSize: batchSize,
+          )
+        : null;
 
     // CPU Profiling
     CpuProfileResult? cpuProfileResult;
@@ -779,18 +936,22 @@ final class Benchmark<T> {
         fn: targetFn,
         iterations: profileIterations,
         setup: setup,
+        teardown: teardownDynamic,
         exportPath: exportPath,
         batchSize: batchSize,
       );
     }
 
     // Cycle Measurement
-    final cyclesResult = await CycleCounter.measure(
-      fn: targetFn,
-      iterations: memoryIterations,
-      setup: setup,
-      batchSize: batchSize,
-    );
+    final cyclesResult = config.measureCycles
+        ? await CycleCounter.measure(
+            fn: targetFn,
+            iterations: memoryIterations,
+            setup: setup,
+            teardown: teardownDynamic,
+            batchSize: batchSize,
+          )
+        : null;
 
     return _MeasurementRun(
       sample: sample,
@@ -804,7 +965,7 @@ final class Benchmark<T> {
   }
 
   Future<void> _warmup(Function targetFn, [Duration? duration]) async {
-    final effectiveWarmup = duration ?? warmupDuration;
+    final effectiveWarmup = duration ?? _effectiveWarmupDuration;
     final stopwatch = Stopwatch()..start();
     final frequency = stopwatch.frequency;
     final targetTicks = (frequency * effectiveWarmup.inMicroseconds) / 1000000;
@@ -812,11 +973,18 @@ final class Benchmark<T> {
       if (setup != null) {
         final state = setup!();
         final resolvedState = state is Future ? await state : state;
-        final r = targetFn(resolvedState);
-        if (r is Future) {
-          Blackhole.sink = await r;
-        } else {
-          Blackhole.sink = r;
+        try {
+          final r = targetFn(resolvedState);
+          if (r is Future) {
+            Blackhole.sink = await r;
+          } else {
+            Blackhole.sink = r;
+          }
+        } finally {
+          if (teardown != null) {
+            final res = teardown!(resolvedState);
+            if (res is Future) await res;
+          }
         }
       } else {
         final r = targetFn();
@@ -865,15 +1033,24 @@ final class Benchmark<T> {
             states.add(state is Future ? await state : state);
           }
           stopwatch.start();
-          for (var i = 0; i < batch; i++) {
-            final r = fnSync(states[i]);
-            if (r is Future) {
-              Blackhole.sink = await r;
-            } else {
-              Blackhole.sink = r;
+          try {
+            for (var i = 0; i < batch; i++) {
+              final r = fnSync(states[i]);
+              if (r is Future) {
+                Blackhole.sink = await r;
+              } else {
+                Blackhole.sink = r;
+              }
+            }
+          } finally {
+            stopwatch.stop();
+            if (teardown != null) {
+              for (var i = 0; i < states.length; i++) {
+                final res = teardown!(states[i]);
+                if (res is Future) await res;
+              }
             }
           }
-          stopwatch.stop();
           remaining -= batch;
         }
       } else {
@@ -886,15 +1063,24 @@ final class Benchmark<T> {
             states.add(state is Future ? await state : state);
           }
           stopwatch.start();
-          for (var i = 0; i < batch; i++) {
-            final r = targetFn(states[i]);
-            if (r is Future) {
-              Blackhole.sink = await r;
-            } else {
-              Blackhole.sink = r;
+          try {
+            for (var i = 0; i < batch; i++) {
+              final r = targetFn(states[i]);
+              if (r is Future) {
+                Blackhole.sink = await r;
+              } else {
+                Blackhole.sink = r;
+              }
+            }
+          } finally {
+            stopwatch.stop();
+            if (teardown != null) {
+              for (var i = 0; i < states.length; i++) {
+                final res = teardown!(states[i]);
+                if (res is Future) await res;
+              }
             }
           }
-          stopwatch.stop();
           remaining -= batch;
         }
       }
@@ -933,8 +1119,9 @@ final class Benchmark<T> {
     Function targetFn,
     int iterations,
   ) async {
+    final targetSampleCount = _effectiveSamples;
     final times = <double>[];
-    for (var s = 0; s < samples; s++) {
+    for (var s = 0; s < targetSampleCount; s++) {
       final totalNs = await _measureIterations(targetFn, iterations);
       times.add(totalNs / iterations);
     }

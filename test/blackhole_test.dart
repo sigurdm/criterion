@@ -37,6 +37,53 @@ void main() {
       expect(() => Blackhole.preventDCE(), returnsNormally);
     });
 
+    test(
+      'blackbox preserves types and values across primitives, lists, objects, and nulls',
+      () {
+        // Primitives
+        final intVal = blackbox<int>(42);
+        expect(intVal, equals(42));
+        expect(intVal, isA<int>());
+
+        final doubleVal = blackbox<double>(3.14159);
+        expect(doubleVal, equals(3.14159));
+        expect(doubleVal, isA<double>());
+
+        final strVal = blackbox<String>('criterion');
+        expect(strVal, equals('criterion'));
+        expect(strVal, isA<String>());
+
+        final boolVal = blackbox<bool>(true);
+        expect(boolVal, isTrue);
+        expect(boolVal, isA<bool>());
+
+        // Lists and collections
+        final listVal = blackbox<List<int>>([1, 2, 3]);
+        expect(listVal, equals([1, 2, 3]));
+        expect(listVal, isA<List<int>>());
+
+        final mapVal = blackbox<Map<String, int>>({'a': 1, 'b': 2});
+        expect(mapVal, equals({'a': 1, 'b': 2}));
+        expect(mapVal, isA<Map<String, int>>());
+
+        // Custom objects
+        final obj = DateTime(2026, 1, 1);
+        final objVal = blackbox<DateTime>(obj);
+        expect(identical(objVal, obj), isTrue);
+        expect(objVal, isA<DateTime>());
+
+        // Null values
+        final nullVal = blackbox<String?>(null);
+        expect(nullVal, isNull);
+        expect(nullVal, isA<String?>());
+
+        // Static method Blackhole.blackbox
+        final staticVal = Blackhole.blackbox<int>(100);
+        expect(staticVal, equals(100));
+        expect(staticVal, isA<int>());
+      },
+    );
+
     test('harness integration works', () async {
       final c = Criterion();
       c.bench(

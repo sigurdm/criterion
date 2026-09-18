@@ -61,16 +61,77 @@ final class HistoryManager {
       stderr.writeln('Warning: Failed to save history to $filePath: $e');
     }
   }
+
+  File _baselineFile(String name) {
+    if (!RegExp(r'^[a-zA-Z0-9_-]+$').hasMatch(name)) {
+      throw ArgumentError.value(
+        name,
+        'name',
+        'Baseline name must contain only alphanumeric characters, underscores, or hyphens.',
+      );
+    }
+    final parentDir = File(filePath).parent.path;
+    return File('$parentDir/baselines/$name.json');
+  }
+
+  /// Saves [results] as a named baseline.
+  ///
+  /// It is an error if [name] contains characters other than `[a-zA-Z0-9_-]`.
+  Future<void> saveNamedBaseline(
+    String name,
+    List<BenchmarkResult> results,
+  ) async {
+    final file = _baselineFile(name);
+    try {
+      if (!file.parent.existsSync()) {
+        file.parent.createSync(recursive: true);
+      }
+      final jsonString = const JsonEncoder.withIndent(
+        '  ',
+      ).convert(results.map((r) => r.toJson()).toList());
+      await file.writeAsString(jsonString);
+    } catch (e) {
+      stderr.writeln(
+        'Warning: Failed to save baseline $name to ${file.path}: $e',
+      );
+    }
+  }
+
+  /// Loads the named baseline with [name].
+  ///
+  /// Returns an empty list if the baseline does not exist or fails to load.
+  /// It is an error if [name] contains characters other than `[a-zA-Z0-9_-]`.
+  Future<List<BenchmarkResult>> loadNamedBaseline(String name) async {
+    final file = _baselineFile(name);
+    if (!file.existsSync()) {
+      return [];
+    }
+    try {
+      final content = await file.readAsString();
+      final List<dynamic> jsonList = jsonDecode(content);
+      return jsonList
+          .map((j) => BenchmarkResult.fromJson(j as Map<String, dynamic>))
+          .toList();
+    } catch (e) {
+      stderr.writeln(
+        'Warning: Failed to load baseline $name from ${file.path}: $e',
+      );
+      return [];
+    }
+  }
 }
 
 /// Checks for regressions between [current] results and [history].
 ///
 /// Prints warnings to stdout if a regression is detected.
-void checkRegressions({
+/// Returns `true` if any regressions are detected, `false` otherwise.
+bool checkRegressions({
   required List<BenchmarkResult> current,
   required List<BenchmarkResult> history,
+  double noiseThreshold = 0.01,
+  String? baselineLabel,
 }) {
-  if (history.isEmpty) return;
+  if (history.isEmpty) return false;
 
   // Group history by benchmark key (name + platform + parameterValue)
   // and find the latest result for each key.
@@ -84,17 +145,26 @@ void checkRegressions({
   }
 
   final baselineList = latestHistory.values.toList();
-  final comparison = compareResults(baselineList, current);
+  final comparison = compareResults(
+    baselineList,
+    current,
+    noiseThreshold: noiseThreshold,
+  );
 
   for (final r in comparison.regressions) {
     final platStr = r.platform.isNotEmpty ? ' (${r.platform})' : '';
     final paramStr = r.parameterValue != null ? ' [${r.parameterValue}]' : '';
+    final baseStr = baselineLabel != null
+        ? ' against baseline "$baselineLabel"'
+        : '';
     print(
-      'WARNING: Regression detected in ${r.name}$platStr$paramStr: '
+      'WARNING: Regression detected in ${r.name}$platStr$paramStr$baseStr: '
       '${Benchmark.formatDuration(r.time.before)} -> ${Benchmark.formatDuration(r.time.after)} '
       '(+${r.time.percentDiff.toStringAsFixed(2)}%)',
     );
   }
+
+  return comparison.regressions.isNotEmpty;
 }
 
 String _historyKey(BenchmarkResult r) {

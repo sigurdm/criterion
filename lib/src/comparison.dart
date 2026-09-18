@@ -13,6 +13,7 @@
 // limitations under the License.
 
 import "dart:convert";
+import "dart:math" as math;
 import "result.dart";
 import "statistics.dart";
 
@@ -57,6 +58,12 @@ final class BenchmarkComparison {
   /// Whether the time difference is statistically significant (95% CI overlap).
   final bool timeSignificant;
 
+  /// The p-value calculated via two-sample bootstrap hypothesis testing, if available.
+  final double? pValue;
+
+  /// Whether the difference was within the configured noise threshold.
+  final bool withinNoiseThreshold;
+
   /// The allocated bytes comparison, if available.
   final MetricComparison? allocatedBytes;
 
@@ -76,11 +83,87 @@ final class BenchmarkComparison {
     required this.parameterValue,
     required this.time,
     required this.timeSignificant,
+    this.pValue,
+    this.withinNoiseThreshold = false,
     this.allocatedBytes,
     this.allocatedObjects,
     this.instructions,
     this.cycles,
   });
+
+  /// Converts this [BenchmarkComparison] to a JSON-encodable map.
+  Map<String, dynamic> toJson() => {
+    'name': name,
+    'platform': platform,
+    if (parameterValue != null) 'parameterValue': parameterValue,
+    'time': {'before': time.before, 'after': time.after},
+    'timeSignificant': timeSignificant,
+    if (pValue != null) 'pValue': pValue,
+    'withinNoiseThreshold': withinNoiseThreshold,
+    if (allocatedBytes != null)
+      'allocatedBytes': {
+        'before': allocatedBytes!.before,
+        'after': allocatedBytes!.after,
+      },
+    if (allocatedObjects != null)
+      'allocatedObjects': {
+        'before': allocatedObjects!.before,
+        'after': allocatedObjects!.after,
+      },
+    if (instructions != null)
+      'instructions': {
+        'before': instructions!.before,
+        'after': instructions!.after,
+      },
+    if (cycles != null)
+      'cycles': {'before': cycles!.before, 'after': cycles!.after},
+  };
+
+  /// Creates a [BenchmarkComparison] from a JSON map.
+  factory BenchmarkComparison.fromJson(Map<String, dynamic> json) {
+    final timeMap = json['time'] as Map<String, dynamic>;
+    final bytesMap = json['allocatedBytes'] as Map<String, dynamic>?;
+    final objectsMap = json['allocatedObjects'] as Map<String, dynamic>?;
+    final instMap = json['instructions'] as Map<String, dynamic>?;
+    final cyclesMap = json['cycles'] as Map<String, dynamic>?;
+
+    return BenchmarkComparison(
+      name: json['name'] as String,
+      platform: (json['platform'] as String?) ?? '',
+      parameterValue: json['parameterValue'],
+      time: MetricComparison(
+        (timeMap['before'] as num).toDouble(),
+        (timeMap['after'] as num).toDouble(),
+      ),
+      timeSignificant: (json['timeSignificant'] as bool?) ?? false,
+      pValue: (json['pValue'] as num?)?.toDouble(),
+      withinNoiseThreshold: (json['withinNoiseThreshold'] as bool?) ?? false,
+      allocatedBytes: bytesMap != null
+          ? MetricComparison(
+              (bytesMap['before'] as num).toDouble(),
+              (bytesMap['after'] as num).toDouble(),
+            )
+          : null,
+      allocatedObjects: objectsMap != null
+          ? MetricComparison(
+              (objectsMap['before'] as num).toDouble(),
+              (objectsMap['after'] as num).toDouble(),
+            )
+          : null,
+      instructions: instMap != null
+          ? MetricComparison(
+              (instMap['before'] as num).toDouble(),
+              (instMap['after'] as num).toDouble(),
+            )
+          : null,
+      cycles: cyclesMap != null
+          ? MetricComparison(
+              (cyclesMap['before'] as num).toDouble(),
+              (cyclesMap['after'] as num).toDouble(),
+            )
+          : null,
+    );
+  }
 }
 
 /// Represents the comparison of two benchmark suites.
@@ -149,7 +232,9 @@ final class SuiteComparison {
 
     for (final c in compared) {
       final timeDelta = _formatPercent(c.time.percentDiff);
-      final timeSign = c.timeSignificant ? "Yes" : "No";
+      final timeSign = c.withinNoiseThreshold
+          ? "No change (noise)"
+          : (c.timeSignificant ? "Yes" : "No");
 
       final row = [
         c.name,
@@ -222,11 +307,56 @@ String _comparisonKey(BenchmarkResult r) {
   return parts.join('::');
 }
 
+/// Computes the two-sample bootstrap p-value under the null hypothesis H0: mu_A = mu_B.
+double _twoSampleBootstrapPValue(
+  List<double> a,
+  List<double> b, {
+  int resamples = 2000,
+}) {
+  final meanA = a.reduce((x, y) => x + y) / a.length;
+  final meanB = b.reduce((x, y) => x + y) / b.length;
+  final obsDiff = (meanA - meanB).abs();
+
+  final totalN = a.length + b.length;
+  final pooledSum = a.reduce((x, y) => x + y) + b.reduce((x, y) => x + y);
+  final pooledMean = pooledSum / totalN;
+
+  final aShifted = a.map((x) => x - meanA + pooledMean).toList();
+  final bShifted = b.map((y) => y - meanB + pooledMean).toList();
+
+  final random = math.Random(42);
+  var extremeCount = 0;
+
+  final lenA = aShifted.length;
+  final lenB = bShifted.length;
+
+  for (var i = 0; i < resamples; i++) {
+    var sumA = 0.0;
+    for (var j = 0; j < lenA; j++) {
+      sumA += aShifted[random.nextInt(lenA)];
+    }
+    final bootMeanA = sumA / lenA;
+
+    var sumB = 0.0;
+    for (var j = 0; j < lenB; j++) {
+      sumB += bShifted[random.nextInt(lenB)];
+    }
+    final bootMeanB = sumB / lenB;
+
+    if ((bootMeanA - bootMeanB).abs() >= obsDiff) {
+      extremeCount++;
+    }
+  }
+
+  return extremeCount / resamples;
+}
+
 /// Compares two lists of benchmark results.
 SuiteComparison compareResults(
   List<BenchmarkResult> before,
-  List<BenchmarkResult> after,
-) {
+  List<BenchmarkResult> after, {
+  double noiseThreshold = 0.01,
+}) {
   final beforeMap = {for (var r in before) _comparisonKey(r): r};
   final afterMap = {for (var r in after) _comparisonKey(r): r};
 
@@ -280,10 +410,53 @@ SuiteComparison compareResults(
             ),
           )
         : a.primary.meanCI;
-    final timeSignificant = _isSignificant(bMeanCI, aMeanCI);
+    final bool statisticallyDifferent;
+    final double? pVal;
+
+    final bNoOpMean = (b.net != null && b.noOp != null) ? b.noOp!.mean : 0.0;
+    final aNoOpMean = (a.net != null && a.noOp != null) ? a.noOp!.mean : 0.0;
+    final bTimes = bNoOpMean > 0
+        ? b.primary.sampleTimes
+              .map((t) => (t - bNoOpMean).clamp(0.0, double.infinity))
+              .toList()
+        : b.primary.sampleTimes;
+    final aTimes = aNoOpMean > 0
+        ? a.primary.sampleTimes
+              .map((t) => (t - aNoOpMean).clamp(0.0, double.infinity))
+              .toList()
+        : a.primary.sampleTimes;
+
+    if (bTimes.length >= 2 &&
+        aTimes.length >= 2 &&
+        (b.primary.stdDev > 0 || a.primary.stdDev > 0)) {
+      final p = _twoSampleBootstrapPValue(bTimes, aTimes);
+      pVal = p;
+      statisticallyDifferent =
+          (p < 0.05 && !_intervalsOverlap(bMeanCI, aMeanCI)) || p < 0.01;
+    } else {
+      final diff = !_intervalsOverlap(bMeanCI, aMeanCI);
+      pVal = diff ? 0.0 : 1.0;
+      statisticallyDifferent = diff;
+    }
 
     final bTime = b.net?.timeNs ?? b.primary.mean;
     final aTime = a.net?.timeNs ?? a.primary.mean;
+    final timeComp = MetricComparison(bTime, aTime);
+    final exceedsNoise = timeComp.percentDiff.abs() > (noiseThreshold * 100.0);
+
+    final bool timeSignificant;
+    final bool withinNoiseThreshold;
+
+    if (statisticallyDifferent && !exceedsNoise) {
+      timeSignificant = false;
+      withinNoiseThreshold = true;
+    } else if (statisticallyDifferent && exceedsNoise) {
+      timeSignificant = true;
+      withinNoiseThreshold = false;
+    } else {
+      timeSignificant = false;
+      withinNoiseThreshold = false;
+    }
 
     final bBytes =
         b.net?.allocatedBytes ?? b.primary.memory?.allocatedBytesPerIteration;
@@ -326,8 +499,10 @@ SuiteComparison compareResults(
         name: a.name,
         platform: a.platform,
         parameterValue: a.parameterValue,
-        time: MetricComparison(bTime, aTime),
+        time: timeComp,
         timeSignificant: timeSignificant,
+        pValue: pVal,
+        withinNoiseThreshold: withinNoiseThreshold,
         allocatedBytes: bytes,
         allocatedObjects: objects,
         instructions: inst,
@@ -339,9 +514,8 @@ SuiteComparison compareResults(
   return SuiteComparison(compared: compared, removed: removed, added: added);
 }
 
-bool _isSignificant(ConfidenceInterval before, ConfidenceInterval after) {
-  return before.upperBound < after.lowerBound ||
-      after.upperBound < before.lowerBound;
+bool _intervalsOverlap(ConfidenceInterval a, ConfidenceInterval b) {
+  return a.lowerBound <= b.upperBound && b.lowerBound <= a.upperBound;
 }
 
 String _formatDuration(double ns) {

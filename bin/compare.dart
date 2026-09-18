@@ -13,16 +13,51 @@
 // limitations under the License.
 
 import "dart:io";
+import "package:args/args.dart";
 import "package:criterion/criterion.dart";
 
 void main(List<String> args) async {
-  if (args.length != 2) {
-    stderr.writeln("Usage: compare <before.json> <after.json>");
+  final parser = ArgParser()
+    ..addOption(
+      'noise-threshold',
+      defaultsTo: '0.01',
+      help:
+          'Relative noise threshold for regression detection (e.g. 0.01 for 1%).',
+    )
+    ..addFlag(
+      'fail-on-regression',
+      defaultsTo: false,
+      negatable: false,
+      help: 'Exit with non-zero exit code if a regression is detected.',
+    );
+
+  ArgResults parsed;
+  try {
+    parsed = parser.parse(args);
+  } catch (e) {
+    stderr.writeln(e);
+    stderr.writeln("Usage: compare [options] <before.json> <after.json>");
+    stderr.writeln(parser.usage);
     exit(1);
   }
 
-  final beforeFile = File(args[0]);
-  final afterFile = File(args[1]);
+  if (parsed.rest.length != 2) {
+    stderr.writeln("Usage: compare [options] <before.json> <after.json>");
+    stderr.writeln(parser.usage);
+    exit(1);
+  }
+
+  final noiseThreshold = double.tryParse(parsed['noise-threshold'] as String);
+  if (noiseThreshold == null || noiseThreshold < 0) {
+    stderr.writeln(
+      "Error: Invalid --noise-threshold value: ${parsed['noise-threshold']}",
+    );
+    exit(1);
+  }
+  final failOnRegression = parsed['fail-on-regression'] as bool;
+
+  final beforeFile = File(parsed.rest[0]);
+  final afterFile = File(parsed.rest[1]);
 
   if (!await beforeFile.exists()) {
     stderr.writeln("Error: File not found: ${beforeFile.path}");
@@ -50,6 +85,17 @@ void main(List<String> args) async {
     exit(1);
   }
 
-  final comparison = compareResults(beforeResults, afterResults);
+  final comparison = compareResults(
+    beforeResults,
+    afterResults,
+    noiseThreshold: noiseThreshold,
+  );
   stdout.write(comparison.toMarkdownTable());
+
+  if (failOnRegression && comparison.regressions.isNotEmpty) {
+    stderr.writeln(
+      "Error: Regressions detected in ${comparison.regressions.length} benchmark(s).",
+    );
+    exitCode = 1;
+  }
 }

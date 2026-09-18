@@ -222,6 +222,7 @@ final class MemoryMeasurer {
     required Function fn,
     required int iterations,
     Function? setup,
+    FutureOr<void> Function(dynamic)? teardown,
     BatchSize? batchSize,
   }) async {
     dart_isolate.Isolate? helperIsolate;
@@ -339,6 +340,13 @@ final class MemoryMeasurer {
         helperSendPort.send(['endBatch', responsePort.sendPort]);
         await responseIterator.moveNext();
 
+        if (teardown != null) {
+          for (var i = 0; i < batch; i++) {
+            final res = teardown(states[i]);
+            if (res is Future) await res;
+          }
+        }
+
         remaining -= batch;
       }
 
@@ -422,6 +430,14 @@ final class MemoryMeasurer {
           }
           final endRss = ProcessInfo.currentRss;
           rssDeltaSum += endRss - baselineRss;
+
+          if (teardown != null) {
+            for (var i = 0; i < batch; i++) {
+              final res = teardown(states[i]);
+              if (res is Future) await res;
+            }
+          }
+
           remaining -= batch;
         }
         return MemoryResult(

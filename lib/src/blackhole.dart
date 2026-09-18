@@ -49,7 +49,55 @@ final class Blackhole {
       print(_sink);
     }
   }
+
+  /// Passes [value] through an opaque runtime barrier that prevents the compiler
+  /// from performing constant-folding, dead-code elimination, or loop-invariant
+  /// code motion on inputs to benchmarked code.
+  ///
+  /// Unlike [consume] (which discards the value into a sink), [blackbox]
+  /// returns [value] unmodified while forcing the optimizing compiler (AOT/JIT/dart2js)
+  /// to treat both the input value and its origin as opaque and dynamic.
+  ///
+  /// Example:
+  /// ```dart
+  /// c.bench('calculate', () {
+  ///   // Prevents the compiler from hoisting `blackbox(42)` out of the loop
+  ///   // or pre-computing `myFunction(42)` at compile-time.
+  ///   final input = blackbox(42);
+  ///   myFunction(input);
+  /// });
+  /// ```
+  @pragma('vm:never-inline')
+  @pragma('dart2js:noInline')
+  static T blackbox<T>(T value) {
+    _sink = value;
+    if ((DateTime.now().millisecondsSinceEpoch & 1) == 2) {
+      return _sink as T;
+    }
+    return value;
+  }
 }
+
+/// Passes [value] through an opaque runtime barrier that prevents the compiler
+/// from performing constant-folding, dead-code elimination, or loop-invariant
+/// code motion on inputs to benchmarked code.
+///
+/// Unlike [blackhole] (which discards the value into a sink), [blackbox]
+/// returns [value] unmodified while forcing the optimizing compiler (AOT/JIT/dart2js)
+/// to treat both the input value and its origin as opaque and dynamic.
+///
+/// Example:
+/// ```dart
+/// c.bench('calculate', () {
+///   // Prevents the compiler from hoisting `blackbox(42)` out of the loop
+///   // or pre-computing `myFunction(42)` at compile-time.
+///   final input = blackbox(42);
+///   myFunction(input);
+/// });
+/// ```
+@pragma('vm:never-inline')
+@pragma('dart2js:noInline')
+T blackbox<T>(T value) => Blackhole.blackbox<T>(value);
 
 /// A zero-cost compiler-safe live sink to prevent dead-code elimination.
 @pragma('vm:prefer-inline')

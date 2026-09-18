@@ -581,5 +581,217 @@ void main() {
       final table = comp.toMarkdownTable();
       expect(table, contains("+∞%"));
     });
+
+    test("BenchmarkComparison toJson and fromJson roundtrip", () {
+      final comp = BenchmarkComparison(
+        name: "test_bench",
+        platform: "vm",
+        parameterValue: 42,
+        time: MetricComparison(100.0, 110.0),
+        timeSignificant: true,
+        pValue: 0.012,
+        withinNoiseThreshold: false,
+        allocatedBytes: MetricComparison(1000.0, 1200.0),
+        allocatedObjects: MetricComparison(10.0, 12.0),
+        instructions: MetricComparison(500.0, 550.0),
+        cycles: MetricComparison(800.0, 900.0),
+      );
+
+      final json = comp.toJson();
+      expect(json['name'], equals('test_bench'));
+      expect(json['platform'], equals('vm'));
+      expect(json['parameterValue'], equals(42));
+      expect(json['timeSignificant'], isTrue);
+      expect(json['pValue'], equals(0.012));
+      expect(json['withinNoiseThreshold'], isFalse);
+      expect(json['allocatedBytes']['before'], equals(1000.0));
+
+      final restored = BenchmarkComparison.fromJson(json);
+      expect(restored.name, equals(comp.name));
+      expect(restored.platform, equals(comp.platform));
+      expect(restored.parameterValue, equals(comp.parameterValue));
+      expect(restored.time.before, equals(comp.time.before));
+      expect(restored.time.after, equals(comp.time.after));
+      expect(restored.timeSignificant, equals(comp.timeSignificant));
+      expect(restored.pValue, equals(comp.pValue));
+      expect(restored.withinNoiseThreshold, equals(comp.withinNoiseThreshold));
+      expect(
+        restored.allocatedBytes!.before,
+        equals(comp.allocatedBytes!.before),
+      );
+      expect(
+        restored.allocatedBytes!.after,
+        equals(comp.allocatedBytes!.after),
+      );
+      expect(
+        restored.allocatedObjects!.before,
+        equals(comp.allocatedObjects!.before),
+      );
+      expect(restored.instructions!.before, equals(comp.instructions!.before));
+      expect(restored.cycles!.before, equals(comp.cycles!.before));
+    });
+
+    test("noiseThreshold suppresses significant regressions within threshold", () {
+      // 0.5% difference: 100.0 -> 100.5
+      final before = [
+        BenchmarkResult(
+          name: "subtle_change",
+          iterations: 100,
+          primary: MeasurementResult(
+            sampleTimes: [99.9, 100.0, 100.1, 100.0],
+            mean: 100.0,
+            median: 100.0,
+            stdDev: 0.1,
+            meanCI: ConfidenceInterval(lowerBound: 99.8, upperBound: 100.2),
+            medianCI: ConfidenceInterval(lowerBound: 99.8, upperBound: 100.2),
+            outliers: OutlierAnalysis(
+              lowSevere: 0,
+              lowMild: 0,
+              highMild: 0,
+              highSevere: 0,
+              outlierVariancePercentage: 0.0,
+            ),
+          ),
+        ),
+      ];
+      final after = [
+        BenchmarkResult(
+          name: "subtle_change",
+          iterations: 100,
+          primary: MeasurementResult(
+            sampleTimes: [100.4, 100.5, 100.6, 100.5],
+            mean: 100.5,
+            median: 100.5,
+            stdDev: 0.1,
+            meanCI: ConfidenceInterval(lowerBound: 100.3, upperBound: 100.7),
+            medianCI: ConfidenceInterval(lowerBound: 100.3, upperBound: 100.7),
+            outliers: OutlierAnalysis(
+              lowSevere: 0,
+              lowMild: 0,
+              highMild: 0,
+              highSevere: 0,
+              outlierVariancePercentage: 0.0,
+            ),
+          ),
+        ),
+      ];
+
+      // With default noiseThreshold = 0.01 (1%), 0.5% change is within noise threshold.
+      final compNoise = compareResults(before, after, noiseThreshold: 0.01);
+      final cNoise = compNoise.compared.first;
+      expect(cNoise.withinNoiseThreshold, isTrue);
+      expect(cNoise.timeSignificant, isFalse);
+      expect(compNoise.regressions, isEmpty);
+      expect(compNoise.toMarkdownTable(), contains("No change (noise)"));
+
+      // With noiseThreshold = 0.001 (0.1%), 0.5% change exceeds noise threshold.
+      final compStrict = compareResults(before, after, noiseThreshold: 0.001);
+      final cStrict = compStrict.compared.first;
+      expect(cStrict.withinNoiseThreshold, isFalse);
+      expect(cStrict.timeSignificant, isTrue);
+      expect(compStrict.regressions, hasLength(1));
+      expect(compStrict.toMarkdownTable(), contains("Yes"));
+    });
+
+    test(
+      "two-sample bootstrap p-value computation handles distinct and identical distributions",
+      () {
+        // Very distinct distributions
+        final beforeDistinct = [
+          BenchmarkResult(
+            name: "bench_distinct",
+            iterations: 100,
+            primary: MeasurementResult(
+              sampleTimes: [10.0, 10.1, 10.2, 10.1, 10.0],
+              mean: 10.08,
+              median: 10.1,
+              stdDev: 0.08,
+              meanCI: ConfidenceInterval(lowerBound: 9.9, upperBound: 10.2),
+              medianCI: ConfidenceInterval(lowerBound: 9.9, upperBound: 10.2),
+              outliers: OutlierAnalysis(
+                lowSevere: 0,
+                lowMild: 0,
+                highMild: 0,
+                highSevere: 0,
+                outlierVariancePercentage: 0.0,
+              ),
+            ),
+          ),
+        ];
+        final afterDistinct = [
+          BenchmarkResult(
+            name: "bench_distinct",
+            iterations: 100,
+            primary: MeasurementResult(
+              sampleTimes: [20.0, 20.1, 20.2, 20.1, 20.0],
+              mean: 20.08,
+              median: 20.1,
+              stdDev: 0.08,
+              meanCI: ConfidenceInterval(lowerBound: 19.9, upperBound: 20.2),
+              medianCI: ConfidenceInterval(lowerBound: 19.9, upperBound: 20.2),
+              outliers: OutlierAnalysis(
+                lowSevere: 0,
+                lowMild: 0,
+                highMild: 0,
+                highSevere: 0,
+                outlierVariancePercentage: 0.0,
+              ),
+            ),
+          ),
+        ];
+        final compDistinct = compareResults(beforeDistinct, afterDistinct);
+        expect(compDistinct.compared.first.pValue, isNotNull);
+        expect(compDistinct.compared.first.pValue!, lessThan(0.01));
+        expect(compDistinct.compared.first.timeSignificant, isTrue);
+
+        // Overlapping noisy distributions: p-value should be higher
+        final beforeSimilar = [
+          BenchmarkResult(
+            name: "bench_similar",
+            iterations: 100,
+            primary: MeasurementResult(
+              sampleTimes: [100.0, 105.0, 95.0, 102.0, 98.0],
+              mean: 100.0,
+              median: 100.0,
+              stdDev: 3.8,
+              meanCI: ConfidenceInterval(lowerBound: 95.0, upperBound: 105.0),
+              medianCI: ConfidenceInterval(lowerBound: 95.0, upperBound: 105.0),
+              outliers: OutlierAnalysis(
+                lowSevere: 0,
+                lowMild: 0,
+                highMild: 0,
+                highSevere: 0,
+                outlierVariancePercentage: 0.0,
+              ),
+            ),
+          ),
+        ];
+        final afterSimilar = [
+          BenchmarkResult(
+            name: "bench_similar",
+            iterations: 100,
+            primary: MeasurementResult(
+              sampleTimes: [101.0, 104.0, 96.0, 103.0, 99.0],
+              mean: 100.6,
+              median: 101.0,
+              stdDev: 3.3,
+              meanCI: ConfidenceInterval(lowerBound: 96.0, upperBound: 105.0),
+              medianCI: ConfidenceInterval(lowerBound: 96.0, upperBound: 105.0),
+              outliers: OutlierAnalysis(
+                lowSevere: 0,
+                lowMild: 0,
+                highMild: 0,
+                highSevere: 0,
+                outlierVariancePercentage: 0.0,
+              ),
+            ),
+          ),
+        ];
+        final compSimilar = compareResults(beforeSimilar, afterSimilar);
+        expect(compSimilar.compared.first.pValue, isNotNull);
+        expect(compSimilar.compared.first.pValue!, greaterThan(0.5));
+        expect(compSimilar.compared.first.timeSignificant, isFalse);
+      },
+    );
   });
 }

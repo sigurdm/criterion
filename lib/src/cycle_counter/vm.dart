@@ -12,12 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+import 'dart:async';
 import 'dart:ffi';
 import '../batch_size.dart';
 import 'compiler.dart';
 
 typedef GetCyclesFunc = Uint64 Function();
 typedef GetCycles = int Function();
+
+@Native<Uint64 Function()>(symbol: 'get_cycles')
+external int _nativeGetCycles();
 
 /// Native CPU cycle counter for x86_64 and ARM64.
 final class CycleCounter {
@@ -30,6 +34,17 @@ final class CycleCounter {
   static Future<void> init() => _initFuture ??= _doInit();
 
   static Future<void> _doInit() async {
+    try {
+      final c = _nativeGetCycles();
+      if (c > 0) {
+        _getCycles = _nativeGetCycles;
+        _supported = true;
+        return;
+      }
+    } catch (_) {
+      // Fall back to runtime compilation.
+    }
+
     final libPath = await CycleCounterCompiler.compile();
     if (libPath != null) {
       try {
@@ -62,6 +77,7 @@ final class CycleCounter {
     required Function fn,
     required int iterations,
     Function? setup,
+    FutureOr<void> Function(dynamic)? teardown,
     BatchSize? batchSize,
   }) async {
     await init();
@@ -83,24 +99,33 @@ final class CycleCounter {
         }
       }
 
-      final start = _getCycles!();
-      if (setup != null) {
-        for (var i = 0; i < batch; i++) {
-          final r = fn(states[i]);
-          if (r is Future) await r;
+      try {
+        final start = _getCycles!();
+        if (setup != null) {
+          for (var i = 0; i < batch; i++) {
+            final r = fn(states[i]);
+            if (r is Future) await r;
+          }
+        } else {
+          for (var i = 0; i < batch; i++) {
+            final r = fn();
+            if (r is Future) await r;
+          }
         }
-      } else {
-        for (var i = 0; i < batch; i++) {
-          final r = fn();
-          if (r is Future) await r;
+        final end = _getCycles!();
+
+        final diff = end - start;
+        final actualDiff = diff < 0 ? 0.0 : diff.toDouble();
+
+        totalDiff += actualDiff;
+      } finally {
+        if (teardown != null) {
+          for (var i = 0; i < states.length; i++) {
+            final res = teardown(states[i]);
+            if (res is Future) await res;
+          }
         }
       }
-      final end = _getCycles!();
-
-      final diff = end - start;
-      final actualDiff = diff < 0 ? 0.0 : diff.toDouble();
-
-      totalDiff += actualDiff;
       remaining -= batch;
     }
 

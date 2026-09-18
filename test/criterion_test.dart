@@ -438,5 +438,130 @@ void main() {
       expect(c.benchmarks[2].name, equals('GroupB / sort / quick'));
       expect(c.benchmarks[3].name, equals('GroupB / sort / merge'));
     });
+    group('Granular Profiler Toggles and Filtering', () {
+      test(
+        'respects measureMemory, measureInstructions, and measureCycles set to false',
+        () async {
+          final c = Criterion(
+            config: const CriterionConfig(
+              useKbssd: false,
+              generateHtmlReport: false,
+              exportJson: false,
+              measureMemory: false,
+              measureInstructions: false,
+              measureCycles: false,
+            ),
+          );
+          c.bench(
+            'no profilers',
+            () {
+              var x = 0;
+              for (var i = 0; i < 100; i++) {
+                x += i;
+              }
+              return x;
+            },
+            samples: 5,
+            warmupDuration: const Duration(milliseconds: 5),
+          );
+
+          final results = await c.run();
+          expect(results, hasLength(1));
+          final primary = results.first.primary;
+          expect(primary.memory, isNull);
+          expect(primary.instructions, isNull);
+          expect(primary.cyclesPerIteration, isNull);
+        },
+      );
+
+      test(
+        'respects individual profiler toggle (only measureMemory: true)',
+        () async {
+          final c = Criterion(
+            config: const CriterionConfig(
+              useKbssd: false,
+              generateHtmlReport: false,
+              exportJson: false,
+              measureMemory: true,
+              measureInstructions: false,
+              measureCycles: false,
+            ),
+          );
+          c.bench(
+            'only memory',
+            () {
+              var x = 0;
+              for (var i = 0; i < 100; i++) {
+                x += i;
+              }
+              return x;
+            },
+            samples: 5,
+            warmupDuration: const Duration(milliseconds: 5),
+          );
+
+          final results = await c.run();
+          expect(results, hasLength(1));
+          final primary = results.first.primary;
+          expect(primary.memory, isNotNull);
+          expect(primary.instructions, isNull);
+          expect(primary.cyclesPerIteration, isNull);
+        },
+      );
+
+      test('filters benchmarks using CriterionConfig filter regex', () async {
+        final c = Criterion(
+          config: const CriterionConfig(
+            filter: r'filter_me_\d',
+            useKbssd: false,
+            generateHtmlReport: false,
+            exportJson: false,
+          ),
+        );
+        c.bench(
+          'filter_me_1',
+          () {},
+          samples: 2,
+          warmupDuration: const Duration(milliseconds: 2),
+        );
+        c.bench(
+          'skip_this',
+          () {},
+          samples: 2,
+          warmupDuration: const Duration(milliseconds: 2),
+        );
+        c.bench(
+          'filter_me_2',
+          () {},
+          samples: 2,
+          warmupDuration: const Duration(milliseconds: 2),
+        );
+
+        final results = await c.run();
+        expect(
+          results.map((r) => r.name),
+          equals(['filter_me_1', 'filter_me_2']),
+        );
+      });
+
+      test('CriterionConfig copyWith copies and replaces fields cleanly', () {
+        const config = CriterionConfig(
+          measureMemory: true,
+          measureInstructions: true,
+          measureCycles: true,
+        );
+        final modified = config.copyWith(
+          measureMemory: false,
+          measureInstructions: false,
+          measureCycles: false,
+          filter: 'custom_filter',
+        );
+        expect(modified.measureMemory, isFalse);
+        expect(modified.measureInstructions, isFalse);
+        expect(modified.measureCycles, isFalse);
+        expect(modified.filter, equals('custom_filter'));
+        expect(modified.useKbssd, equals(config.useKbssd));
+      });
+    });
   });
 }

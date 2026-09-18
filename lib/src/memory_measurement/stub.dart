@@ -7,6 +7,7 @@ final class MemoryMeasurer {
     required Function fn,
     required int iterations,
     Function? setup,
+    FutureOr<void> Function(dynamic)? teardown,
     BatchSize? batchSize,
   }) {
     return Future.value(null);

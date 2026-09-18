@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+import 'dart:ffi';
+import 'package:ffi/ffi.dart';
 import 'package:criterion/criterion.dart';
 
 /// Represents a large buffer allocation that would cause memory exhaustion
@@ -37,6 +39,19 @@ void main() async {
     'Sort List (Default Batched Setup)',
     (list) => list.sort(),
     setup: () => [5, 2, 8, 1, 9, 3, 7, 4, 6, 0],
+  );
+
+  // For native resources (e.g. allocating FFI memory pointers),
+  // BatchSize.perIteration (batch size of 1) combined with teardown cleanly
+  // frees the pointer after each iteration outside the measured timing loop.
+  criterion.bench<Pointer<Uint8>>(
+    'Native Memory Buffer (BatchSize.perIteration + teardown)',
+    (Pointer<Uint8> ptr) {
+      ptr.asTypedList(1024).fillRange(0, 1024, 42);
+    },
+    setup: () => calloc<Uint8>(1024),
+    teardown: calloc.free,
+    batchSize: BatchSize.perIteration,
   );
 
   // For large objects (e.g. allocating huge matrices or buffers),

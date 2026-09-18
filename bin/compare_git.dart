@@ -16,20 +16,57 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:path/path.dart' as p;
+import 'package:args/args.dart';
 import 'package:criterion/criterion.dart';
 
 void main(List<String> args) async {
-  if (args.length < 3) {
-    stderr.writeln(
-      'Usage: dart run criterion:compare_git <ref1> <ref2> <benchmark_file.dart> [extra_args...]',
+  final parser = ArgParser(allowTrailingOptions: true)
+    ..addOption(
+      'noise-threshold',
+      defaultsTo: '0.01',
+      help:
+          'Relative noise threshold for regression detection (e.g. 0.01 for 1%).',
+    )
+    ..addFlag(
+      'fail-on-regression',
+      defaultsTo: false,
+      negatable: false,
+      help: 'Exit with non-zero exit code if a regression is detected.',
     );
+
+  ArgResults parsed;
+  try {
+    parsed = parser.parse(args);
+  } catch (e) {
+    stderr.writeln(e);
+    stderr.writeln(
+      'Usage: dart run criterion:compare_git [options] <ref1> <ref2> <benchmark_file.dart> [extra_args...]',
+    );
+    stderr.writeln(parser.usage);
     exit(1);
   }
 
-  final ref1 = args[0];
-  final ref2 = args[1];
-  final benchmarkFileVal = args[2];
-  final extraArgs = args.sublist(3);
+  if (parsed.rest.length < 3) {
+    stderr.writeln(
+      'Usage: dart run criterion:compare_git [options] <ref1> <ref2> <benchmark_file.dart> [extra_args...]',
+    );
+    stderr.writeln(parser.usage);
+    exit(1);
+  }
+
+  final noiseThreshold = double.tryParse(parsed['noise-threshold'] as String);
+  if (noiseThreshold == null || noiseThreshold < 0) {
+    stderr.writeln(
+      "Error: Invalid --noise-threshold value: ${parsed['noise-threshold']}",
+    );
+    exit(1);
+  }
+  final failOnRegression = parsed['fail-on-regression'] as bool;
+
+  final ref1 = parsed.rest[0];
+  final ref2 = parsed.rest[1];
+  final benchmarkFileVal = parsed.rest[2];
+  final extraArgs = parsed.rest.sublist(3);
 
   final benchmarkFile = File(benchmarkFileVal);
   if (!benchmarkFile.existsSync()) {
@@ -79,8 +116,19 @@ void main(List<String> args) async {
       relPackageDir,
     );
 
-    final report = compareResults(results1, results2).toMarkdownTable();
-    print(report);
+    final comparison = compareResults(
+      results1,
+      results2,
+      noiseThreshold: noiseThreshold,
+    );
+    print(comparison.toMarkdownTable());
+
+    if (failOnRegression && comparison.regressions.isNotEmpty) {
+      stderr.writeln(
+        'Error: Regressions detected in ${comparison.regressions.length} benchmark(s).',
+      );
+      exitCode = 1;
+    }
   } catch (e, stackTrace) {
     stderr.writeln('Error: $e');
     stderr.writeln(stackTrace);

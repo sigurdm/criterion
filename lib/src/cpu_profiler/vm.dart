@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+import 'dart:async';
 import 'dart:convert';
 import 'dart:developer' as developer;
 import 'dart:io';
@@ -29,6 +30,7 @@ final class CpuProfiler {
     required Function fn,
     required int iterations,
     Function? setup,
+    FutureOr<void> Function(dynamic)? teardown,
     String? exportPath,
     BatchSize? batchSize,
   }) async {
@@ -71,13 +73,22 @@ final class CpuProfiler {
           final state = setup();
           states.add(state is Future ? await state : state);
         }
-        startTime = (await service.getVMTimelineMicros()).timestamp!;
-        for (var i = 0; i < batch; i++) {
-          final r = fn(states[i]);
-          final res = r is Future ? await r : r;
-          Blackhole.sink = res;
+        try {
+          startTime = (await service.getVMTimelineMicros()).timestamp!;
+          for (var i = 0; i < batch; i++) {
+            final r = fn(states[i]);
+            final res = r is Future ? await r : r;
+            Blackhole.sink = res;
+          }
+          endTime = (await service.getVMTimelineMicros()).timestamp!;
+        } finally {
+          if (teardown != null) {
+            for (var i = 0; i < states.length; i++) {
+              final res = teardown(states[i]);
+              if (res is Future) await res;
+            }
+          }
         }
-        endTime = (await service.getVMTimelineMicros()).timestamp!;
       } else {
         startTime = (await service.getVMTimelineMicros()).timestamp!;
         var remaining = iterations;
@@ -92,14 +103,23 @@ final class CpuProfiler {
           }
 
           if (setup != null) {
-            final batchStart = developer.Timeline.now;
-            for (var i = 0; i < batch; i++) {
-              final r = fn(states[i]);
-              final res = r is Future ? await r : r;
-              Blackhole.sink = res;
+            try {
+              final batchStart = developer.Timeline.now;
+              for (var i = 0; i < batch; i++) {
+                final r = fn(states[i]);
+                final res = r is Future ? await r : r;
+                Blackhole.sink = res;
+              }
+              final batchEnd = developer.Timeline.now;
+              intervals.add((batchStart, batchEnd));
+            } finally {
+              if (teardown != null) {
+                for (var i = 0; i < states.length; i++) {
+                  final res = teardown(states[i]);
+                  if (res is Future) await res;
+                }
+              }
             }
-            final batchEnd = developer.Timeline.now;
-            intervals.add((batchStart, batchEnd));
           } else {
             for (var i = 0; i < batch; i++) {
               final r = fn();

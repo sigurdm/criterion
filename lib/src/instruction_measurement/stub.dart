@@ -9,6 +9,7 @@ final class InstructionMeasurer {
     required Function fn,
     required int iterations,
     Function? setup,
+    FutureOr<void> Function(dynamic)? teardown,
     BatchSize? batchSize,
   }) async {
     return null;

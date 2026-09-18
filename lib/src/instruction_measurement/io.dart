@@ -164,6 +164,7 @@ final class InstructionMeasurer {
     required Function fn,
     required int iterations,
     Function? setup,
+    FutureOr<void> Function(dynamic)? teardown,
     BatchSize? batchSize,
   }) async {
     if (!isSupported) return null;
@@ -211,26 +212,35 @@ final class InstructionMeasurer {
           }
         }
 
-        // Enable counter during function execution
-        ioctlFn(fd, _perfEventIocEnable, 0);
+        try {
+          // Enable counter during function execution
+          ioctlFn(fd, _perfEventIocEnable, 0);
 
-        // Run workload
-        for (var i = 0; i < batch; i++) {
-          if (setup != null) {
-            final r = fn(states[i]);
-            if (r is Future) {
-              await r;
+          // Run workload
+          for (var i = 0; i < batch; i++) {
+            if (setup != null) {
+              final r = fn(states[i]);
+              if (r is Future) {
+                await r;
+              }
+            } else {
+              final r = fn();
+              if (r is Future) {
+                await r;
+              }
             }
-          } else {
-            final r = fn();
-            if (r is Future) {
-              await r;
+          }
+        } finally {
+          // Disable counter while preparing next batch
+          ioctlFn(fd, _perfEventIocDisable, 0);
+
+          if (teardown != null) {
+            for (var i = 0; i < states.length; i++) {
+              final res = teardown(states[i]);
+              if (res is Future) await res;
             }
           }
         }
-
-        // Disable counter while preparing next batch
-        ioctlFn(fd, _perfEventIocDisable, 0);
 
         remaining -= batch;
       }

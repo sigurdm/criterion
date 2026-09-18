@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+import 'dart:async';
 import '../batch_size.dart';
 import '../result.dart';
 
@@ -22,6 +23,7 @@ final class CpuProfiler {
     required Function fn,
     required int iterations,
     Function? setup,
+    FutureOr<void> Function(dynamic)? teardown,
     String? exportPath,
     BatchSize? batchSize,
   }) async {
