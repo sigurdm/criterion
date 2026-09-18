@@ -31,7 +31,7 @@ final class Blackhole {
   @pragma('vm:prefer-inline')
   @pragma('dart2js:prefer-inline')
   @pragma('wasm:prefer-inline')
-  void consume(Object? value) {
+  static void consume(Object? value) {
     _sink = value;
   }
 

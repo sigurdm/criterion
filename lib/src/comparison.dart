@@ -280,22 +280,24 @@ final class SuiteComparison {
     ];
 
     final sb = StringBuffer();
-    sb.writeln("| ${headers.join(" | ")} |");
-    sb.writeln("| ${headers.map((_) => "---").join(" | ")} |");
+    sb.writeln('| ${headers.join(' | ')} |');
+    sb.writeln('| ${headers.map((_) => '---').join(' | ')} |');
+
+    String esc(String cell) => cell.replaceAll('|', r'\|');
 
     for (final c in compared) {
       final timeDelta = _formatPercent(c.time.percentDiff);
       final timeSign = c.withinNoiseThreshold
-          ? "No change (noise)"
-          : (c.timeSignificant ? "Yes" : "No");
+          ? 'No change (noise)'
+          : (c.timeSignificant ? 'Yes' : 'No');
 
       final row = [
-        c.name,
-        if (hasPlatform) c.platform,
-        if (hasParameter) c.parameterValue?.toString() ?? "N/A",
+        esc(c.name),
+        if (hasPlatform) esc(c.platform),
+        if (hasParameter) esc(c.parameterValue?.toString() ?? 'N/A'),
         _formatDuration(c.time.before),
         _formatDuration(c.time.after),
-        "${_formatDiff(c.time.diff, _formatDuration)} ($timeDelta)",
+        '${_formatDiff(c.time.diff, _formatDuration)} ($timeDelta)',
         timeSign,
         if (hasMemory) ...[
           c.allocatedBytes != null

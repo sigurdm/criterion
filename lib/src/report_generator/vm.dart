@@ -31,26 +31,36 @@ final class ReportGenerator {
     List<BenchmarkResult>? history,
     String? suiteName,
   }) async {
+    if (const bool.fromEnvironment('CRITERION_EMIT_RESULTS_MARKER')) {
+      print(
+        '__CRITERION_RESULTS_JSON__:${jsonEncode(results.map((r) => r.toJson()).toList())}',
+      );
+    }
+
     if (!config.exportJson && !config.generateHtmlReport) {
       return;
     }
 
-    final directory = Directory(config.reportDir);
-    if (!directory.existsSync()) {
-      directory.createSync(recursive: true);
-    }
+    try {
+      final directory = Directory(config.reportDir);
+      if (!directory.existsSync()) {
+        directory.createSync(recursive: true);
+      }
 
-    if (config.exportJson) {
-      await _exportJson(results, directory);
-    }
+      if (config.exportJson) {
+        await _exportJson(results, directory);
+      }
 
-    if (config.generateHtmlReport) {
-      await _generateHtml(
-        results,
-        directory,
-        history: history,
-        suiteName: suiteName,
-      );
+      if (config.generateHtmlReport) {
+        await _generateHtml(
+          results,
+          directory,
+          history: history,
+          suiteName: suiteName,
+        );
+      }
+    } on FileSystemException catch (e) {
+      stderr.writeln('Warning: Failed to write benchmark report: $e');
     }
   }
 
@@ -423,12 +433,13 @@ final class ReportGenerator {
                 .replace(/'/g, '&#39;');
         }
         function formatDuration(ns) {
-            if (ns < 1.0) return (ns * 1000).toFixed(2) + ' ps';
-            if (ns < 1000.0) return ns.toFixed(2) + ' ns';
+            const abs = Math.abs(ns);
+            if (abs < 1.0) return (ns * 1000).toFixed(2) + ' ps';
+            if (abs < 1000.0) return ns.toFixed(2) + ' ns';
             const us = ns / 1000.0;
-            if (us < 1000.0) return us.toFixed(2) + ' μs';
+            if (Math.abs(us) < 1000.0) return us.toFixed(2) + ' μs';
             const ms = us / 1000.0;
-            if (ms < 1000.0) return ms.toFixed(2) + ' ms';
+            if (Math.abs(ms) < 1000.0) return ms.toFixed(2) + ' ms';
             const s = ms / 1000.0;
             return s.toFixed(2) + ' s';
         }
@@ -447,15 +458,19 @@ final class ReportGenerator {
 
         // KDE Math
         function stdDev(values) {
-            const mean = values.reduce((a, b) => a + b) / values.length;
-            const variance = values.map(x => (x - mean) ** 2).reduce((a, b) => a + b) / (values.length - 1);
+            if (!values || values.length < 2) return 0;
+            const mean = values.reduce((a, b) => a + b, 0) / values.length;
+            const variance = values.reduce((a, x) => a + (x - mean) ** 2, 0) / (values.length - 1);
             return Math.sqrt(variance);
         }
 
         function silvermanBandwidth(values) {
+            if (!values || values.length === 0) return 1;
             const sigma = stdDev(values);
             const n = values.length;
-            if (sigma === 0 || n === 0) return 1;
+            if (!Number.isFinite(sigma) || sigma <= 0 || n < 2) {
+                return Math.max(Math.abs(values[0]) * 0.01, 1e-6);
+            }
             return sigma * Math.pow(4 / (3 * n), 0.2);
         }
 
@@ -464,10 +479,14 @@ final class ReportGenerator {
         }
 
         function getKdeData(values) {
+            if (!values || values.length === 0) return [];
             const bandwidth = silvermanBandwidth(values);
-            const min = Math.min(...values);
-            const max = Math.max(...values);
-            const range = max - min;
+            let min = values[0];
+            let max = values[0];
+            for (let i = 1; i < values.length; i++) {
+                if (values[i] < min) min = values[i];
+                if (values[i] > max) max = values[i];
+            }
             
             // Generate points
             const steps = 100;
@@ -1266,8 +1285,8 @@ final class ReportGenerator {
                     datasets: [{
                         label: 'Mean Time',
                         data: selectedBenchmarks.map(b => b.primary.mean),
-                        backgroundColor: bgColors.slice(0, selectedBenchmarks.length),
-                        borderColor: colors.slice(0, selectedBenchmarks.length),
+                        backgroundColor: getBgColors(selectedBenchmarks.length),
+                        borderColor: getColors(selectedBenchmarks.length),
                         borderWidth: 1
                     }]
                 },

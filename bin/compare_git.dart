@@ -32,34 +32,51 @@ void main(List<String> args) async {
       defaultsTo: false,
       negatable: false,
       help: 'Exit with non-zero exit code if a regression is detected.',
+    )
+    ..addFlag(
+      'help',
+      abbr: 'h',
+      negatable: false,
+      help: 'Print this usage information.',
     );
 
   ArgResults parsed;
   try {
     parsed = parser.parse(args);
-  } catch (e) {
-    stderr.writeln(e);
+  } on FormatException catch (e) {
+    stderr.writeln('Error: ${e.message}');
     stderr.writeln(
-      'Usage: dart run criterion:compare_git [options] <ref1> <ref2> <benchmark_file.dart> [extra_args...]',
+      'Usage: dart run criterion:compare_git [options] <ref1> <ref2> <benchmark_file.dart> [-- extra_args...]',
     );
     stderr.writeln(parser.usage);
-    exit(1);
+    exitCode = 64;
+    return;
+  }
+
+  if (parsed['help'] as bool) {
+    stdout.writeln(
+      'Usage: dart run criterion:compare_git [options] <ref1> <ref2> <benchmark_file.dart> [-- extra_args...]',
+    );
+    stdout.writeln(parser.usage);
+    return;
   }
 
   if (parsed.rest.length < 3) {
     stderr.writeln(
-      'Usage: dart run criterion:compare_git [options] <ref1> <ref2> <benchmark_file.dart> [extra_args...]',
+      'Usage: dart run criterion:compare_git [options] <ref1> <ref2> <benchmark_file.dart> [-- extra_args...]',
     );
     stderr.writeln(parser.usage);
-    exit(1);
+    exitCode = 64;
+    return;
   }
 
   final noiseThreshold = double.tryParse(parsed['noise-threshold'] as String);
-  if (noiseThreshold == null || noiseThreshold < 0) {
+  if (noiseThreshold == null || noiseThreshold < 0 || noiseThreshold.isNaN) {
     stderr.writeln(
-      "Error: Invalid --noise-threshold value: ${parsed['noise-threshold']}",
+      'Error: Invalid --noise-threshold value: ${parsed['noise-threshold']}',
     );
-    exit(1);
+    exitCode = 64;
+    return;
   }
   final failOnRegression = parsed['fail-on-regression'] as bool;
 
@@ -68,25 +85,39 @@ void main(List<String> args) async {
   final benchmarkFileVal = parsed.rest[2];
   final extraArgs = parsed.rest.sublist(3);
 
+  if (ref1.startsWith('-') || ref2.startsWith('-')) {
+    stderr.writeln('Error: Git refs must not start with "-".');
+    exitCode = 64;
+    return;
+  }
+
   final benchmarkFile = File(benchmarkFileVal);
   if (!benchmarkFile.existsSync()) {
     stderr.writeln('Error: Benchmark file does not exist: $benchmarkFileVal');
-    exit(1);
+    exitCode = 1;
+    return;
   }
 
   // Verify running inside git repository
   if (!await _isGitRepository()) {
     stderr.writeln('Error: Not inside a git repository.');
-    exit(1);
+    exitCode = 1;
+    return;
   }
 
   final gitRoot = await _getGitRoot();
-  final relativeBenchmarkPath = p.relative(
-    benchmarkFile.absolute.path,
-    from: gitRoot,
-  );
-  final packageRoot = _findPackageRoot(benchmarkFile, gitRoot);
-  final relPackageDir = p.relative(packageRoot, from: gitRoot);
+  final absBenchmarkPath = p.canonicalize(benchmarkFile.absolute.path);
+  final absGitRoot = p.canonicalize(gitRoot);
+  if (!p.isWithin(absGitRoot, absBenchmarkPath)) {
+    stderr.writeln(
+      'Error: Benchmark file ($benchmarkFileVal) must be inside the git repository ($gitRoot).',
+    );
+    exitCode = 1;
+    return;
+  }
+  final relativeBenchmarkPath = p.relative(absBenchmarkPath, from: absGitRoot);
+  final packageRoot = _findPackageRoot(benchmarkFile, absGitRoot);
+  final relPackageDir = p.relative(packageRoot, from: absGitRoot);
 
   Directory? worktreeDir1;
   Directory? worktreeDir2;
@@ -185,6 +216,7 @@ Future<void> _createWorktree(String path, String ref) async {
     'worktree',
     'add',
     '--detach',
+    '--',
     path,
     ref,
   ]);
@@ -199,13 +231,9 @@ Future<void> _cleanupWorktree(String path) async {
     'worktree',
     'remove',
     '--force',
+    '--',
     path,
   ]);
-  if (result.exitCode != 0) {
-    stderr.writeln(
-      'Warning: Failed to remove worktree $path: ${result.stderr}',
-    );
-  }
   final dir = Directory(path);
   if (dir.existsSync()) {
     try {
@@ -213,6 +241,9 @@ Future<void> _cleanupWorktree(String path) async {
     } catch (e) {
       stderr.writeln('Warning: Failed to delete temp directory $path: $e');
     }
+  }
+  if (result.exitCode != 0) {
+    await Process.run('git', ['worktree', 'prune']);
   }
 }
 

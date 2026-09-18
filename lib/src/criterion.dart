@@ -30,6 +30,7 @@ import 'history.dart';
 import 'history_trim.dart';
 import 'cpu_profiler.dart';
 import 'cycle_counter.dart';
+import 'platform_info.dart';
 import 'package:path/path.dart' as p;
 
 /// Defines a benchmark suite and runs all registered benchmarks.
@@ -924,11 +925,10 @@ final class Benchmark<T> {
     // CPU Profiling
     CpuProfileResult? cpuProfileResult;
     if (config.cpuProfiling) {
-      final targetProfileNs = 200 * 1000 * 1000; // 200ms
-      final profileIterations = (targetProfileNs / sample.mean).round().clamp(
-        100,
-        1000000,
-      );
+      const targetProfileNs = 200 * 1000 * 1000; // 200ms
+      final profileIterations = sample.mean > 0
+          ? (targetProfileNs / sample.mean).round().clamp(100, 1000000)
+          : 100000;
       final safeName = name.replaceAll(RegExp(r'[^a-zA-Z0-9_-]'), '_');
       final exportPath = p.join(
         config.reportDir,
@@ -972,24 +972,57 @@ final class Benchmark<T> {
     final stopwatch = Stopwatch()..start();
     final frequency = stopwatch.frequency;
     final targetTicks = (frequency * effectiveWarmup.inMicroseconds) / 1000000;
-    while (stopwatch.elapsedTicks < targetTicks) {
-      if (setup != null) {
-        final state = setup!();
-        final resolvedState = state is Future ? await state : state;
-        try {
-          final r = targetFn(resolvedState);
-          if (r is Future) {
-            Blackhole.sink = await r;
-          } else {
-            Blackhole.sink = r;
-          }
-        } finally {
-          if (teardown != null) {
-            final res = teardown!(resolvedState);
-            if (res is Future) await res;
+    if (setup != null) {
+      if (targetFn is Object? Function(T)) {
+        final fnSync = targetFn;
+        while (stopwatch.elapsedTicks < targetTicks) {
+          final state = setup!();
+          final resolvedState = state is Future ? await state : state;
+          try {
+            final r = fnSync(resolvedState);
+            if (r is Future) {
+              Blackhole.sink = await r;
+            } else {
+              Blackhole.sink = r;
+            }
+          } finally {
+            if (teardown != null) {
+              final res = teardown!(resolvedState);
+              if (res is Future) await res;
+            }
           }
         }
       } else {
+        while (stopwatch.elapsedTicks < targetTicks) {
+          final state = setup!();
+          final resolvedState = state is Future ? await state : state;
+          try {
+            final r = targetFn(resolvedState);
+            if (r is Future) {
+              Blackhole.sink = await r;
+            } else {
+              Blackhole.sink = r;
+            }
+          } finally {
+            if (teardown != null) {
+              final res = teardown!(resolvedState);
+              if (res is Future) await res;
+            }
+          }
+        }
+      }
+    } else if (targetFn is Object? Function()) {
+      final fnSync = targetFn;
+      while (stopwatch.elapsedTicks < targetTicks) {
+        final r = fnSync();
+        if (r is Future) {
+          Blackhole.sink = await r;
+        } else {
+          Blackhole.sink = r;
+        }
+      }
+    } else {
+      while (stopwatch.elapsedTicks < targetTicks) {
         final r = targetFn();
         if (r is Future) {
           Blackhole.sink = await r;
@@ -1014,7 +1047,12 @@ final class Benchmark<T> {
       if (ns >= targetNs || wallNs >= maxWallNs) {
         break;
       }
-      iterations *= 10;
+      if (ns > 0 && iterations * (targetNs / ns) < iterations * 10) {
+        final estimated = (iterations * (targetNs / ns) * 1.15).ceil();
+        iterations = estimated < iterations * 2 ? iterations * 2 : estimated;
+      } else {
+        iterations *= 10;
+      }
       if (iterations > 1000000000) {
         break;
       }
@@ -1489,26 +1527,28 @@ final class Benchmark<T> {
 
   /// Formats duration in nanoseconds to a human readable string.
   static String formatDuration(double ns) {
-    if (ns < 1.0) {
+    final abs = ns.abs();
+    if (abs < 1.0) {
       return '${(ns * 1000).toStringAsFixed(2)} ps';
     }
-    if (ns < 1000.0) {
+    if (abs < 1000.0) {
       return '${ns.toStringAsFixed(2)} ns';
     }
     final us = ns / 1000.0;
-    if (us < 1000.0) {
+    if (us.abs() < 1000.0) {
       return '${us.toStringAsFixed(2)} μs';
     }
     final ms = us / 1000.0;
-    if (ms < 1000.0) {
+    if (ms.abs() < 1000.0) {
       return '${ms.toStringAsFixed(2)} ms';
     }
     final s = ms / 1000.0;
     return '${s.toStringAsFixed(2)} s';
   }
 
-  /// Formats text to be bold in ansi supporting terminals.
+  /// Formats text to be bold in ANSI-supporting terminals.
   static String bold(String text) {
+    if (!supportsAnsiEscapes) return text;
     return '\x1B[1m$text\x1B[22m';
   }
 

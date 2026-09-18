@@ -29,30 +29,45 @@ void main(List<String> args) async {
       defaultsTo: false,
       negatable: false,
       help: 'Exit with non-zero exit code if a regression is detected.',
+    )
+    ..addFlag(
+      'help',
+      abbr: 'h',
+      negatable: false,
+      help: 'Print this usage information.',
     );
 
   ArgResults parsed;
   try {
     parsed = parser.parse(args);
-  } catch (e) {
-    stderr.writeln(e);
-    stderr.writeln("Usage: compare [options] <before.json> <after.json>");
+  } on FormatException catch (e) {
+    stderr.writeln('Error: ${e.message}');
+    stderr.writeln('Usage: compare [options] <before.json> <after.json>');
     stderr.writeln(parser.usage);
-    exit(1);
+    exitCode = 64;
+    return;
+  }
+
+  if (parsed['help'] as bool) {
+    stdout.writeln('Usage: compare [options] <before.json> <after.json>');
+    stdout.writeln(parser.usage);
+    return;
   }
 
   if (parsed.rest.length != 2) {
-    stderr.writeln("Usage: compare [options] <before.json> <after.json>");
+    stderr.writeln('Usage: compare [options] <before.json> <after.json>');
     stderr.writeln(parser.usage);
-    exit(1);
+    exitCode = 64;
+    return;
   }
 
   final noiseThreshold = double.tryParse(parsed['noise-threshold'] as String);
-  if (noiseThreshold == null || noiseThreshold < 0) {
+  if (noiseThreshold == null || noiseThreshold < 0 || noiseThreshold.isNaN) {
     stderr.writeln(
-      "Error: Invalid --noise-threshold value: ${parsed['noise-threshold']}",
+      'Error: Invalid --noise-threshold value: ${parsed['noise-threshold']}',
     );
-    exit(1);
+    exitCode = 64;
+    return;
   }
   final failOnRegression = parsed['fail-on-regression'] as bool;
 
@@ -60,12 +75,14 @@ void main(List<String> args) async {
   final afterFile = File(parsed.rest[1]);
 
   if (!await beforeFile.exists()) {
-    stderr.writeln("Error: File not found: ${beforeFile.path}");
-    exit(1);
+    stderr.writeln('Error: File not found: ${beforeFile.path}');
+    exitCode = 1;
+    return;
   }
   if (!await afterFile.exists()) {
-    stderr.writeln("Error: File not found: ${afterFile.path}");
-    exit(1);
+    stderr.writeln('Error: File not found: ${afterFile.path}');
+    exitCode = 1;
+    return;
   }
 
   List<BenchmarkResult> beforeResults;
@@ -74,15 +91,17 @@ void main(List<String> args) async {
   try {
     beforeResults = loadResults(await beforeFile.readAsString());
   } catch (e) {
-    stderr.writeln("Error parsing ${beforeFile.path}: $e");
-    exit(1);
+    stderr.writeln('Error parsing ${beforeFile.path}: $e');
+    exitCode = 1;
+    return;
   }
 
   try {
     afterResults = loadResults(await afterFile.readAsString());
   } catch (e) {
-    stderr.writeln("Error parsing ${afterFile.path}: $e");
-    exit(1);
+    stderr.writeln('Error parsing ${afterFile.path}: $e');
+    exitCode = 1;
+    return;
   }
 
   final comparison = compareResults(

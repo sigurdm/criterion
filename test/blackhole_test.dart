@@ -19,10 +19,9 @@ import 'package:test/test.dart';
 void main() {
   group('Blackhole', () {
     test('can consume values', () {
-      final bh = Blackhole();
-      expect(() => bh.consume(42), returnsNormally);
-      expect(() => bh.consume('string'), returnsNormally);
-      expect(() => bh.consume(null), returnsNormally);
+      expect(() => Blackhole.consume(42), returnsNormally);
+      expect(() => Blackhole.consume('string'), returnsNormally);
+      expect(() => Blackhole.consume(null), returnsNormally);
     });
 
     test('global blackhole function can consume values', () {
@@ -115,7 +114,13 @@ void main() {
     });
 
     test('harness integration works', () async {
-      final c = Criterion();
+      final c = Criterion(
+        config: const CriterionConfig(
+          exportJson: false,
+          generateHtmlReport: false,
+          exportHistory: false,
+        ),
+      );
       c.bench(
         'bench_with_blackhole',
         () {

@@ -21,7 +21,6 @@ void main(List<String> arguments) async {
   final parser = ArgParser()
     ..addOption(
       'history',
-      abbr: 'h',
       defaultsTo: 'benchmark/criterion_history.json',
       help: 'Path to history JSON file.',
     )
@@ -31,34 +30,48 @@ void main(List<String> arguments) async {
       defaultsTo: 'benchmark/report',
       help: 'Output directory for HTML trend report.',
     )
-    ..addFlag('help', negatable: false, help: 'Show usage instructions.');
+    ..addFlag(
+      'help',
+      abbr: 'h',
+      negatable: false,
+      help: 'Show usage instructions.',
+    );
 
   final ArgResults argResults;
   try {
     argResults = parser.parse(arguments);
-  } catch (e) {
-    stderr.writeln('Error: $e\n');
+  } on FormatException catch (e) {
+    stderr.writeln('Error: ${e.message}\n');
     stderr.writeln(parser.usage);
-    exit(1);
+    exitCode = 64;
+    return;
   }
 
   if (argResults['help'] as bool) {
     stdout.writeln('Usage: dart run criterion:graph [options]\n');
     stdout.writeln(parser.usage);
-    exit(0);
+    return;
   }
 
   final historyPath = argResults['history'] as String;
   final historyFile = File(historyPath);
   if (!await historyFile.exists()) {
     stderr.writeln('Error: History file not found at $historyPath');
-    exit(1);
+    exitCode = 1;
+    return;
   }
 
-  final history = loadResults(await historyFile.readAsString());
+  List<BenchmarkResult> history;
+  try {
+    history = loadResults(await historyFile.readAsString());
+  } catch (e) {
+    stderr.writeln('Error parsing history file $historyPath: $e');
+    exitCode = 1;
+    return;
+  }
   if (history.isEmpty) {
     stdout.writeln('No historical benchmark results found in $historyPath');
-    exit(0);
+    return;
   }
 
   // Group by benchmark name and platform

@@ -18,7 +18,14 @@ import '../result.dart';
 String get localOs => Platform.operatingSystem;
 String get localDartSdkVersion => Platform.version.split(' ').first;
 
-GitCommit? get localGitCommit {
+bool get supportsAnsiEscapes =>
+    !const bool.fromEnvironment('NO_COLOR') &&
+    !Platform.environment.containsKey('NO_COLOR') &&
+    stdout.supportsAnsiEscapes;
+
+final GitCommit? localGitCommit = _readGitCommit();
+
+GitCommit? _readGitCommit() {
   try {
     final result = Process.runSync('git', [
       'log',

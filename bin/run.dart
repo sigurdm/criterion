@@ -108,16 +108,65 @@ Future<void> main(List<String> args) async {
     ..addOption(
       'noise-threshold',
       help: 'Relative noise threshold for regression detection (e.g. 0.01).',
+    )
+    ..addFlag(
+      'help',
+      abbr: 'h',
+      negatable: false,
+      help: 'Print this usage information.',
     );
 
   ArgResults results;
   try {
     results = parser.parse(args);
-  } catch (e) {
-    print(e);
-    print(parser.usage);
-    exitCode = 1;
+  } on FormatException catch (e) {
+    stderr.writeln('Error: ${e.message}');
+    stderr.writeln('Usage: dart run criterion:run [options] [target...]');
+    stderr.writeln(parser.usage);
+    exitCode = 64;
     return;
+  }
+
+  if (results['help'] as bool) {
+    stdout.writeln('Usage: dart run criterion:run [options] [target...]');
+    stdout.writeln(parser.usage);
+    return;
+  }
+
+  int? samples;
+  if (results['samples'] != null) {
+    samples = int.tryParse(results['samples'] as String);
+    if (samples == null || samples < 2) {
+      stderr.writeln(
+        'Error: Invalid --samples value "${results['samples']}" (must be an integer >= 2).',
+      );
+      exitCode = 64;
+      return;
+    }
+  }
+
+  int? warmupTime;
+  if (results['warmup-time'] != null) {
+    warmupTime = int.tryParse(results['warmup-time'] as String);
+    if (warmupTime == null || warmupTime < 0) {
+      stderr.writeln(
+        'Error: Invalid --warmup-time value "${results['warmup-time']}" (must be a non-negative integer).',
+      );
+      exitCode = 64;
+      return;
+    }
+  }
+
+  double? noiseThreshold;
+  if (results['noise-threshold'] != null) {
+    noiseThreshold = double.tryParse(results['noise-threshold'] as String);
+    if (noiseThreshold == null || noiseThreshold < 0 || noiseThreshold.isNaN) {
+      stderr.writeln(
+        'Error: Invalid --noise-threshold value "${results['noise-threshold']}" (must be a non-negative number).',
+      );
+      exitCode = 64;
+      return;
+    }
   }
 
   final targetFiles = <File>[];
@@ -136,8 +185,10 @@ Future<void> main(List<String> args) async {
       targetFiles.sort((a, b) => a.path.compareTo(b.path));
     }
     if (targetFiles.isEmpty) {
-      print('Usage: dart run criterion:run [options] <benchmark_file.dart>');
-      print(parser.usage);
+      stderr.writeln(
+        'Usage: dart run criterion:run [options] <benchmark_file.dart>',
+      );
+      stderr.writeln(parser.usage);
       exitCode = 1;
       return;
     }
@@ -154,7 +205,7 @@ Future<void> main(List<String> args) async {
     }
     targetFiles.sort((a, b) => a.path.compareTo(b.path));
     if (targetFiles.isEmpty) {
-      print(
+      stderr.writeln(
         'Error: No runnable benchmark files found in directory: ${results.rest.first}',
       );
       exitCode = 1;
@@ -164,7 +215,7 @@ Future<void> main(List<String> args) async {
     for (final targetPath in results.rest) {
       final targetFile = File(targetPath);
       if (!targetFile.existsSync()) {
-        print('Error: Target file does not exist: $targetPath');
+        stderr.writeln('Error: Target file does not exist: $targetPath');
         exitCode = 1;
         return;
       }
@@ -178,12 +229,6 @@ Future<void> main(List<String> args) async {
   final vmFlags = results['vm-flag'] as List<String>;
   final filter = results['filter'] as String?;
   final quick = results['quick'] as bool;
-  final samples = results['samples'] != null
-      ? int.tryParse(results['samples'] as String)
-      : null;
-  final warmupTime = results['warmup-time'] != null
-      ? int.tryParse(results['warmup-time'] as String)
-      : null;
   final noHtml = results['no-html'] as bool;
   final timingOnly = results['timing-only'] as bool;
   final allMetrics = results['all-metrics'] as bool;
@@ -196,9 +241,6 @@ Future<void> main(List<String> args) async {
   final saveBaseline = results['save-baseline'] as String?;
   final baseline = results['baseline'] as String?;
   final failOnRegression = results['fail-on-regression'] as bool;
-  final noiseThreshold = results['noise-threshold'] != null
-      ? double.tryParse(results['noise-threshold'] as String)
-      : null;
 
   final dartPath = Platform.resolvedExecutable;
   final os = Platform.operatingSystem;
@@ -208,7 +250,6 @@ Future<void> main(List<String> args) async {
 
   final aggregatedJsonResults = <dynamic>[];
   final collectedFlavorResults = <BenchmarkResult>[];
-  final defaultResultsFile = File('benchmark/report/results.json');
 
   final hasMultipleRuns =
       flavors.length > 1 ||
@@ -223,11 +264,6 @@ Future<void> main(List<String> args) async {
 
       for (final flavor in flavors) {
         runCounter++;
-        if (!isJson && hasMultipleRuns && defaultResultsFile.existsSync()) {
-          defaultResultsFile.deleteSync();
-        }
-
-        final countBeforeFlavor = collectedFlavorResults.length;
 
         if (!isJson) {
           if (targetFiles.length > 1) {
@@ -392,14 +428,6 @@ instance.invokeMain(...dartArgs);
           )) {
             return;
           }
-        }
-
-        if (!isJson && hasMultipleRuns && defaultResultsFile.existsSync()) {
-          if (collectedFlavorResults.length == countBeforeFlavor) {
-            final jsonContent = defaultResultsFile.readAsStringSync();
-            collectedFlavorResults.addAll(loadResults(jsonContent));
-          }
-          defaultResultsFile.deleteSync();
         }
       }
     }
