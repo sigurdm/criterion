@@ -7,10 +7,9 @@ import 'package:test/test.dart';
 void main() {
   group('KBSSD Integration', () {
     test('converges quickly for stable benchmark', () async {
-      // We want the transition to happen after cold buffer (10 samples * ~10ms = 100ms)
-      // plus some adaptive samples.
-      // Calibration takes ~20ms.
-      // So 200ms should be during the adaptive loop.
+      // We want the transition to happen after cold buffer (10 samples * ~10ms
+      // = 100ms) plus some adaptive samples. Calibration takes ~20ms, so 200ms
+      // should land during the detection loop.
       final stateful = StatefulTimeBenchmark(
         changeTimeMs: 200,
         slowMs: 2,
@@ -29,7 +28,7 @@ void main() {
       await runZoned(
         () async {
           results = await criterion('test_suite', (c) {
-            c.bench('stable_bench', stateful.run);
+            c.bench('stable_bench', stateful.run, samples: 6);
           }, config: config);
         },
         zoneSpecification: ZoneSpecification(
@@ -42,14 +41,16 @@ void main() {
       expect(results, isNotNull);
       expect(results!.length, equals(1));
       final result = results!.first;
-      expect(result.primary.sampleTimes.length, equals(5)); // kbssdWindowSize
+      expect(result.primary.sampleTimes.length, equals(6));
 
-      // It should have converged, so no warning about not converging
-      final hasWarning = prints.any((p) => p.contains('did not converge'));
+      // It should have converged, so no steady-state warning.
+      final hasWarning = prints.any(
+        (p) => p.contains('did not reach a steady state'),
+      );
       expect(hasWarning, isFalse, reason: 'Should not have warning: $prints');
     });
 
-    test('warns and falls back if not converged', () async {
+    test('warns and still samples if steady state is never reached', () async {
       final random = math.Random(42);
       void noisy() {
         final stack = StackTrace.current.toString();
@@ -75,7 +76,7 @@ void main() {
       await runZoned(
         () async {
           results = await criterion('test_suite', (c) {
-            c.bench('noisy_bench', noisy);
+            c.bench('noisy_bench', noisy, samples: 4);
           }, config: config);
         },
         zoneSpecification: ZoneSpecification(
@@ -88,11 +89,48 @@ void main() {
       expect(results, isNotNull);
       expect(results!.length, equals(1));
       final result = results!.first;
-      expect(result.primary.sampleTimes.length, equals(5)); // kbssdWindowSize
+      // Even without convergence, the requested samples are still collected.
+      expect(result.primary.sampleTimes.length, equals(4));
 
-      // It should have warned
-      final hasWarning = prints.any((p) => p.contains('did not converge'));
+      final hasWarning = prints.any(
+        (p) => p.contains('did not reach a steady state'),
+      );
       expect(hasWarning, isTrue, reason: 'Should have warning: $prints');
+    });
+
+    test('samples is honoured whether or not KBSSD is enabled', () async {
+      // Regression test: KBSSD used to ignore `samples` entirely and always
+      // report exactly `kbssdWindowSize` values, so every statistic was
+      // computed on 15 points regardless of what the caller asked for.
+      Future<int> sampleCountWith({required bool useKbssd}) async {
+        final results = await criterion(
+          'sample_count',
+          (c) {
+            c.bench(
+              'trivial',
+              () => blackhole(1 + 1),
+              samples: 9,
+              warmupDuration: const Duration(milliseconds: 5),
+            );
+          },
+          config: CriterionConfig(
+            useKbssd: useKbssd,
+            kbssdWindowSize: 3,
+            kbssdStabilityRequired: 2,
+            kbssdMaxSamples: 30,
+            generateHtmlReport: false,
+            exportJson: false,
+            exportHistory: false,
+            measureMemory: false,
+            measureInstructions: false,
+            measureCycles: false,
+          ),
+        );
+        return results.single.primary.sampleTimes.length;
+      }
+
+      expect(await sampleCountWith(useKbssd: true), equals(9));
+      expect(await sampleCountWith(useKbssd: false), equals(9));
     });
   });
 }

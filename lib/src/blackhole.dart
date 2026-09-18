@@ -50,6 +50,14 @@ final class Blackhole {
     }
   }
 
+  /// A value that is always `0` at runtime, but that no compiler can fold to a
+  /// constant because it is produced by a non-const call in a lazily
+  /// initialized static field.
+  ///
+  /// Reading it costs a static field load (plus an initialization check), which
+  /// is what makes [blackbox] cheap.
+  static final int _opaqueZero = int.parse('0');
+
   /// Passes [value] through an opaque runtime barrier that prevents the compiler
   /// from performing constant-folding, dead-code elimination, or loop-invariant
   /// code motion on inputs to benchmarked code.
@@ -57,6 +65,12 @@ final class Blackhole {
   /// Unlike [consume] (which discards the value into a sink), [blackbox]
   /// returns [value] unmodified while forcing the optimizing compiler (AOT/JIT/dart2js)
   /// to treat both the input value and its origin as opaque and dynamic.
+  ///
+  /// Performance considerations:
+  /// * The barrier is a non-inlinable call, a store to a static field and a
+  ///   comparison against [_opaqueZero]; it costs a few nanoseconds per call.
+  ///   It is deliberately cheap, but it is not free, so prefer [consume] or
+  ///   [blackhole] when only the *result* needs to be kept alive.
   ///
   /// Example:
   /// ```dart
@@ -71,7 +85,7 @@ final class Blackhole {
   @pragma('dart2js:noInline')
   static T blackbox<T>(T value) {
     _sink = value;
-    if ((DateTime.now().millisecondsSinceEpoch & 1) == 2) {
+    if (_opaqueZero != 0) {
       return _sink as T;
     }
     return value;

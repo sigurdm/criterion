@@ -218,7 +218,17 @@ await criterion(
 ```
 
 ### KBSSD Adaptive Benchmarking
-By default, Criterion uses KBSSD to detect convergence dynamically. It monitors a sliding window of measurements and stops when the variance stabilizes, saving time for fast-converging benchmarks while ensuring stability for noisy ones. You can disable it by setting `useKbssd: false` in the configuration.
+By default, Criterion uses KBSSD as an **adaptive warm-up**. It monitors a sliding window of measurements and waits until the "past" and "present" windows become statistically indistinguishable — that is, until the benchmark has reached a steady state and the JIT, caches and allocator have settled.
+
+Those detection measurements are discarded. Once steady state is reached (or `kbssdMaxSamples` measurements have been spent trying), Criterion collects a fresh set of `samples` measurements and reports statistics on those. So `samples` means the same thing whether KBSSD is on or off; KBSSD only decides *when* sampling starts.
+
+Convergence is declared when either:
+* the Maximum Mean Discrepancy between the two windows falls to at most `kbssdScaleFactor` times the MMD expected from sampling noise alone (estimated by permuting the observed measurements), or
+* the relative standard error of the mean of the present window is within 3%,
+
+for `kbssdStabilityRequired` consecutive measurements.
+
+You can disable KBSSD by setting `useKbssd: false`, in which case Criterion falls back to a fixed `warmupDuration` followed by `samples` measurements.
 
 ---
 

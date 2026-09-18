@@ -199,5 +199,92 @@ void main() {
         expect(checkSEM([-1.0, 1.0], tolerance: 0.03), isFalse);
       });
     });
+
+    group('estimateNullMmd', () {
+      test('is deterministic by default', () {
+        final values = [1.0, 1.1, 0.9, 1.05, 0.95, 1.02, 0.98, 1.01];
+        expect(
+          estimateNullMmd(values, 0.1),
+          equals(estimateNullMmd(values, 0.1)),
+        );
+      });
+
+      test('exceeds the MMD between two halves of homogeneous data', () {
+        // Values drawn from one distribution: the live MMD between the first
+        // and second half should sit at or below the calibrated null.
+        final rnd = math.Random(7);
+        final values = List<double>.generate(
+          40,
+          (_) => 100.0 + rnd.nextDouble(),
+        );
+        final sigma = populationStandardDeviation(values);
+
+        final nullMmd = estimateNullMmd(values, sigma);
+        final liveMmd = calculateMMD(
+          values.sublist(0, 20),
+          values.sublist(20),
+          sigma,
+        );
+
+        expect(nullMmd, greaterThan(0.0));
+        expect(liveMmd, lessThanOrEqualTo(nullMmd * 2.0));
+      });
+
+      test('flags a genuine distribution shift', () {
+        // A step change halfway through must produce a live MMD well above the
+        // permutation null, which destroys the time ordering.
+        final values = <double>[
+          ...List<double>.filled(20, 100.0),
+          ...List<double>.filled(20, 200.0),
+        ];
+        final sigma = populationStandardDeviation(values);
+
+        final nullMmd = estimateNullMmd(values, sigma);
+        final liveMmd = calculateMMD(
+          values.sublist(0, 20),
+          values.sublist(20),
+          sigma,
+        );
+
+        expect(liveMmd, greaterThan(nullMmd * 2.0));
+      });
+
+      test('saturates together with the live statistic for a tiny sigma', () {
+        // Regression test for the old threshold: with a degenerate bandwidth
+        // the kernel collapses to a delta function, so only the diagonal terms
+        // survive and every MMD over n distinct points saturates at
+        // sqrt(2 / n). A threshold derived from a *dispersion* measure went to
+        // zero while the statistic stayed at that plateau, so stable
+        // benchmarks could never converge via MMD. A permutation null
+        // saturates to the same plateau, so the comparison still works.
+        final values = [10.0, 10.1, 9.9, 10.05, 9.95, 10.02, 9.98, 10.01];
+        const tinySigma = 1e-9;
+
+        final nullMmd = estimateNullMmd(values, tinySigma);
+        final liveMmd = calculateMMD(
+          values.sublist(0, 4),
+          values.sublist(4),
+          tinySigma,
+        );
+
+        final plateau = math.sqrt(2.0 / 4);
+        expect(nullMmd, closeTo(plateau, 0.01));
+        expect(liveMmd, closeTo(plateau, 0.01));
+        expect(liveMmd, lessThanOrEqualTo(nullMmd * 2.0));
+      });
+
+      test('rejects invalid arguments', () {
+        expect(() => estimateNullMmd([1.0], 1.0), throwsArgumentError);
+        expect(() => estimateNullMmd([1.0, 2.0], 0.0), throwsArgumentError);
+        expect(
+          () => estimateNullMmd([1.0, 2.0], 1.0, permutations: 0),
+          throwsArgumentError,
+        );
+        expect(
+          () => estimateNullMmd([1.0, 2.0], 1.0, quantile: 1.5),
+          throwsArgumentError,
+        );
+      });
+    });
   });
 }

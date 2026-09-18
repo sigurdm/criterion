@@ -1128,39 +1128,68 @@ final class Benchmark<T> {
     return times;
   }
 
+  /// Collects samples using Kernel-Based Steady-State Detection.
+  ///
+  /// This runs in two phases:
+  ///
+  /// 1. **Steady-state detection** (adaptive warm-up). Measurements are taken
+  ///    until a sliding "past" window and "present" window become
+  ///    indistinguishable for [CriterionConfig.kbssdStabilityRequired]
+  ///    consecutive steps, or until [CriterionConfig.kbssdMaxSamples]
+  ///    measurements have been taken. None of these measurements are reported:
+  ///    they describe the transient, which is exactly what we are waiting out.
+  /// 2. **Measurement**. Once steady state is reached, a fresh set of
+  ///    [_effectiveSamples] measurements is collected and returned.
+  ///
+  /// Splitting the two is what allows the `samples` argument to mean the same
+  /// thing whether or not KBSSD is enabled.
   Future<List<double>> _collectSamplesKbssd(
     Function targetFn,
     int iterations,
   ) async {
+    final converged = await _detectSteadyState(targetFn, iterations);
+    if (!converged && !env.isJson) {
+      print(
+        '  Warning: Benchmark $name did not reach a steady state after '
+        '${config.kbssdMaxSamples} measurements; sampling anyway.',
+      );
+    }
+    return _collectSamples(targetFn, iterations);
+  }
+
+  /// Runs measurements until the benchmark reaches a steady state.
+  ///
+  /// Returns `true` if steady state was detected, `false` if
+  /// [CriterionConfig.kbssdMaxSamples] measurements were exhausted first.
+  Future<bool> _detectSteadyState(Function targetFn, int iterations) async {
     final w = config.kbssdWindowSize;
     final maxSamples = config.kbssdMaxSamples;
     final stabilityRequired = config.kbssdStabilityRequired;
     final trimPct = config.kbssdTrimPercentage;
     final scale = config.kbssdScaleFactor;
 
-    // 1. Fill cold buffer of size w * 2
+    // 1. Fill cold buffer of size w * 2.
     final coldBuffer = <double>[];
     for (var i = 0; i < w * 2; i++) {
       final totalNs = await _measureIterations(targetFn, iterations);
       coldBuffer.add(totalNs / iterations);
     }
 
-    // 2. Calculate dynamic convergence threshold
-    final coldSample = Sample(coldBuffer);
-    final coldMedian = coldSample.median;
-    final coldMad = calculateMAD(coldBuffer, coldMedian);
-    final relativeMad = coldMedian == 0.0 ? 0.0 : coldMad / coldMedian;
-    final threshold = relativeMad * scale;
-
+    // 2. Pick a kernel bandwidth from the observed dispersion.
     var sigma = populationStandardDeviation(coldBuffer);
     if (sigma == 0.0) {
       sigma = 1e-9;
     }
 
+    // 3. Calibrate the convergence threshold *in MMD units*, by estimating the
+    //    MMD we would see between two halves of the data if nothing changed.
+    //    Comparing the live MMD against a raw dispersion measure (such as a
+    //    relative MAD) is not meaningful, and degenerates for very stable
+    //    benchmarks where `sigma` collapses towards zero.
+    final threshold = estimateNullMmd(coldBuffer, sigma) * scale;
+
     final slidingBuffer = List<double>.from(coldBuffer);
     var stableCount = 0;
-    List<double>? bestWindow;
-    double minMmd = double.infinity;
 
     for (var s = w * 2; s < maxSamples; s++) {
       final totalNs = await _measureIterations(targetFn, iterations);
@@ -1182,7 +1211,7 @@ final class Benchmark<T> {
         mmd = calculateMMD(trimmedPast, trimmedPresent, sigma);
       }
 
-      final isStable = mmd < threshold || checkSEM(present);
+      final isStable = mmd <= threshold || checkSEM(present);
 
       if (isStable) {
         stableCount++;
@@ -1190,22 +1219,12 @@ final class Benchmark<T> {
         stableCount = 0;
       }
 
-      if (mmd < minMmd) {
-        minMmd = mmd;
-        bestWindow = List<double>.from(present);
-      }
-
       if (stableCount >= stabilityRequired) {
-        return present;
+        return true;
       }
     }
 
-    if (!env.isJson) {
-      print(
-        '  Warning: Benchmark $name did not converge after $maxSamples samples.',
-      );
-    }
-    return bestWindow ?? slidingBuffer.sublist(w, w * 2);
+    return false;
   }
 
   void _report(_MeasurementRun mainRun, _MeasurementRun? noOpRun) {
@@ -1269,7 +1288,6 @@ final class Benchmark<T> {
             '(${formatCount(memory.allocatedObjectsPerIteration!)} objects) per iteration',
           );
           _printTopAllocations(memory.classAllocations);
-          _printCpuProfile(mainRun.cpuProfile);
         }
         print(
           '  RSS:    ${formatRssDelta(memory.rssDeltaBytes)} (native heap growth)',
@@ -1314,7 +1332,6 @@ final class Benchmark<T> {
             '[Net: ${bold(formatBytes(netBytesClamped))}]',
           );
           _printTopAllocations(totalMemory.classAllocations);
-          _printCpuProfile(mainRun.cpuProfile);
         }
         print(
           '  RSS:    [Total: ${bold(formatRssDelta(totalMemory.rssDeltaBytes))}] '
@@ -1353,6 +1370,11 @@ final class Benchmark<T> {
         );
       }
     }
+
+    // Printed regardless of whether memory measurement produced allocation
+    // counts: CPU profiling is enabled independently of `measureMemory`.
+    _printCpuProfile(mainRun.cpuProfile);
+
     final meanTimeNs = noOpRun != null
         ? (mainRun.sample.mean - noOpRun.sample.mean).clamp(
             0.0,

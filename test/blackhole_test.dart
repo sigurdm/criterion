@@ -13,6 +13,7 @@
 // limitations under the License.
 
 import 'package:criterion/criterion.dart';
+import 'package:criterion/src/memory_measurement.dart';
 import 'package:test/test.dart';
 
 void main() {
@@ -83,6 +84,35 @@ void main() {
         expect(staticVal, isA<int>());
       },
     );
+
+    test('blackbox does not allocate per call', () async {
+      // Regression test: `blackbox` used to call `DateTime.now()` as its
+      // opaque barrier, which allocated a `DateTime` and cost ~44 ns per call
+      // — enough to dominate any microbenchmark it was used in.
+      //
+      // Measured per-iteration object counts include a small fixed VM-service
+      // overhead amortized over the measurement run (~0.05 objects/iteration),
+      // so a per-call allocation (1.0 objects/iteration) is far outside it.
+      final result = await MemoryMeasurer.measure(
+        fn: () => blackbox<int>(42),
+        iterations: 500,
+      );
+
+      expect(
+        result,
+        isNotNull,
+        reason: 'VM service unavailable; cannot verify allocation behaviour',
+      );
+      final objects = result!.allocatedObjectsPerIteration;
+      expect(objects, isNotNull);
+      expect(
+        objects,
+        lessThan(0.5),
+        reason:
+            'blackbox allocated $objects objects per call; it must not '
+            'allocate on the hot path',
+      );
+    });
 
     test('harness integration works', () async {
       final c = Criterion();

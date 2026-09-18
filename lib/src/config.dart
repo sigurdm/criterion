@@ -47,10 +47,20 @@ final class CriterionConfig {
   /// The percentage of extreme values to trim from the windows.
   final double kbssdTrimPercentage;
 
-  /// The scale factor applied to the relative MAD of the cold buffer to determine the threshold.
+  /// The scale factor applied to the estimated null MMD to determine the
+  /// convergence threshold.
+  ///
+  /// A value of `2.0` means "declare the two windows indistinguishable when
+  /// their MMD is at most twice what we would expect from sampling noise
+  /// alone". Larger values converge sooner.
   final double kbssdScaleFactor;
 
-  /// The maximum number of samples to collect before giving up.
+  /// The maximum number of measurements to take while waiting for the
+  /// benchmark to reach a steady state.
+  ///
+  /// These measurements are discarded; they are the adaptive warm-up. Once
+  /// steady state is reached (or this budget is exhausted), a fresh set of
+  /// `samples` measurements is collected and reported.
   final int kbssdMaxSamples;
 
   /// Whether to measure memory allocations.

@@ -113,6 +113,56 @@ void main() {
     },
   );
 
+  test('CPU profile is reported when memory measurement is disabled', () async {
+    // Regression test: `_printCpuProfile` used to be nested inside the memory
+    // reporting block, so `cpuProfiling: true` combined with
+    // `measureMemory: false` (or `--no-memory` / `--timing-only`, or any host
+    // where the allocation profile comes back null) printed nothing at all.
+    final config = CriterionConfig(
+      reportDir: tempDir.path,
+      generateHtmlReport: false,
+      exportJson: false,
+      exportHistory: false,
+      useKbssd: false,
+      cpuProfiling: true,
+      measureMemory: false,
+      measureInstructions: false,
+      measureCycles: false,
+    );
+
+    final prints = <String>[];
+    await runZoned(
+      () => criterion('CPU Profile Without Memory', (c) {
+        c.bench(
+          'fib-cpu-no-memory',
+          () {
+            final r = fib(20);
+            if (r == 0) throw StateError('invalid fib');
+          },
+          samples: 5,
+          warmupDuration: Duration.zero,
+        );
+      }, config: config),
+      zoneSpecification: ZoneSpecification(
+        print: (self, parent, zone, line) {
+          prints.add(line);
+          parent.print(zone, line);
+        },
+      ),
+    );
+
+    expect(
+      prints.any((p) => p.contains('memory:')),
+      isFalse,
+      reason: 'memory measurement was disabled',
+    );
+    expect(
+      prints.any((p) => p.contains('Top CPU functions:')),
+      isTrue,
+      reason: 'CPU profile should be printed independently of memory: $prints',
+    );
+  });
+
   test('CpuProfiler.collect supports setup callback', () async {
     var setupCount = 0;
     final profile = await CpuProfiler.collect(

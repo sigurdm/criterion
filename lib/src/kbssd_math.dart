@@ -1,4 +1,18 @@
-import r"dart:math" as math;
+// Copyright 2026 Google LLC
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+import 'dart:math' as math;
 
 /// Calculates the Median Absolute Deviation (MAD) of [data] given its [median].
 ///
@@ -120,6 +134,91 @@ double calculateMMD(List<double> X, List<double> Y, double sigma) {
 
   final mmdSquared = sumXX / (m * m) - 2.0 * sumXY / (m * n) + sumYY / (n * n);
   return math.sqrt(math.max(0.0, mmdSquared));
+}
+
+/// Estimates the Maximum Mean Discrepancy expected between two halves of
+/// [values] when the underlying distribution does *not* change.
+///
+/// [values] is repeatedly shuffled and split in half, and the MMD between the
+/// two halves is computed with bandwidth [sigma] for each permutation. Because
+/// shuffling destroys the time ordering, the two halves are exchangeable, so
+/// the resulting statistic captures only the MMD attributable to sampling
+/// noise — an estimate of the null distribution.
+///
+/// The [quantile]-th quantile of the permuted MMDs is returned (default:
+/// 0.9), using linear interpolation.
+///
+/// Use this to calibrate a convergence threshold: a raw dispersion measure
+/// such as a relative MAD is not comparable to an MMD, whereas this value is
+/// computed by the same kernel with the same [sigma] and therefore is. It also
+/// self-corrects for a degenerate bandwidth: when [sigma] is tiny the kernel
+/// collapses towards a delta function and *both* the null estimate and the
+/// live statistic saturate together.
+///
+/// An optional [random] generator can be provided; the default is seeded
+/// deterministically so that convergence decisions are reproducible.
+///
+/// Performance considerations:
+/// * Runs in $O(permutations \times n^2)$ time and $O(n)$ space.
+///
+/// It is an error if [values] contains fewer than two elements, if [sigma] is
+/// not positive, if [permutations] is less than 1, or if [quantile] is not
+/// between 0.0 and 1.0 (inclusive).
+double estimateNullMmd(
+  List<double> values,
+  double sigma, {
+  int permutations = 20,
+  double quantile = 0.9,
+  math.Random? random,
+}) {
+  if (values.length < 2) {
+    throw ArgumentError.value(
+      values,
+      'values',
+      'Must contain at least two elements',
+    );
+  }
+  if (sigma <= 0.0) {
+    throw ArgumentError.value(sigma, 'sigma', 'Must be positive');
+  }
+  if (permutations < 1) {
+    throw ArgumentError.value(
+      permutations,
+      'permutations',
+      'Must be at least 1',
+    );
+  }
+  if (quantile < 0.0 || quantile > 1.0) {
+    throw ArgumentError.value(
+      quantile,
+      'quantile',
+      'Must be between 0.0 and 1.0',
+    );
+  }
+
+  final rnd = random ?? math.Random(0x63726974);
+  final shuffled = List<double>.from(values);
+  final half = shuffled.length ~/ 2;
+
+  final mmds = <double>[];
+  for (var i = 0; i < permutations; i++) {
+    shuffled.shuffle(rnd);
+    mmds.add(
+      calculateMMD(
+        shuffled.sublist(0, half),
+        shuffled.sublist(half, half * 2),
+        sigma,
+      ),
+    );
+  }
+  mmds.sort();
+
+  if (mmds.length == 1) return mmds.first;
+  final pos = quantile * (mmds.length - 1);
+  final idx = pos.floor();
+  if (idx >= mmds.length - 1) return mmds.last;
+  final fraction = pos - idx;
+  return mmds[idx] + fraction * (mmds[idx + 1] - mmds[idx]);
 }
 
 /// Checks if the Standard Error of the Mean (SEM) of [window] is within
