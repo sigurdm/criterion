@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:io';
-import 'dart:math' as math;
 import 'package:criterion/criterion.dart';
 import 'package:test/test.dart';
 
@@ -54,11 +53,15 @@ void main() {
     });
 
     test('warns and still samples if steady state is never reached', () async {
-      final random = math.Random(42);
+      var callCount = 0;
       void noisy() {
-        // High variance
-        final ms = random.nextInt(10) + 1; // 1 to 10 ms
-        sleep(Duration(milliseconds: ms));
+        // Use a Stopwatch spin rather than sleep(1..10ms): on Windows the
+        // default scheduler timer resolution is 15.625 ms, which quantizes
+        // every 1..10 ms sleep to the same ~15 ms tick and hides the variance.
+        callCount++;
+        final targetMicros = (callCount.isEven ? 2000 : 50) + callCount * 150;
+        final sw = Stopwatch()..start();
+        while (sw.elapsedMicroseconds < targetMicros) {}
       }
 
       final prints = <String>[];
