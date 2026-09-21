@@ -140,6 +140,77 @@ void main() {
         ),
       );
     });
+
+    test(
+      'slims older entries of sampleTimes/noOp and strips cpuProfile/classAllocations from all entries',
+      () {
+        final base = DateTime.utc(2020);
+        BenchmarkResult richResult(int day) => BenchmarkResult(
+          name: 'bench',
+          iterations: 10,
+          timestamp: base.add(Duration(days: day)),
+          primary: MeasurementResult(
+            sampleTimes: [10.0, 11.0, 12.0],
+            mean: 11.0,
+            median: 11.0,
+            stdDev: 1.0,
+            meanCI: ConfidenceInterval(lowerBound: 10.0, upperBound: 12.0),
+            medianCI: ConfidenceInterval(lowerBound: 10.0, upperBound: 12.0),
+            outliers: OutlierAnalysis(
+              lowSevere: 0,
+              lowMild: 0,
+              highMild: 0,
+              highSevere: 0,
+              outlierVariancePercentage: 0.0,
+            ),
+            memory: MemoryResult(
+              allocatedBytesPerIteration: 64.0,
+              allocatedObjectsPerIteration: 2.0,
+              rssDeltaBytes: 1024,
+              classAllocations: [
+                ClassAllocation(
+                  className: 'Foo',
+                  libraryUri: 'package:foo/foo.dart',
+                  bytes: 640,
+                  instances: 20,
+                ),
+              ],
+            ),
+            cpuProfile: CpuProfileResult(
+              sampleCount: 50,
+              samplePeriod: 100,
+              functions: [
+                CpuProfileFunction(
+                  name: 'hotFn',
+                  resolvedUrl: 'package:foo/foo.dart',
+                  exclusiveTicks: 25,
+                  inclusiveTicks: 50,
+                ),
+              ],
+            ),
+          ),
+        );
+
+        final trimmed = trimHistory([
+          richResult(0),
+          richResult(1),
+        ], maxEntriesPerBenchmark: 10);
+
+        expect(trimmed, hasLength(2));
+        // Older entry: sampleTimes, cpuProfile, classAllocations stripped.
+        expect(trimmed[0].primary.sampleTimes, isEmpty);
+        expect(trimmed[0].primary.cpuProfile, isNull);
+        expect(trimmed[0].primary.memory!.allocatedBytesPerIteration, 64.0);
+        expect(trimmed[0].primary.memory!.classAllocations, isNull);
+
+        // Newest entry: sampleTimes preserved for bootstrap baseline, but
+        // cpuProfile and classAllocations stripped.
+        expect(trimmed[1].primary.sampleTimes, equals([10.0, 11.0, 12.0]));
+        expect(trimmed[1].primary.cpuProfile, isNull);
+        expect(trimmed[1].primary.memory!.allocatedBytesPerIteration, 64.0);
+        expect(trimmed[1].primary.memory!.classAllocations, isNull);
+      },
+    );
   });
 
   group('HistoryManager durability', () {

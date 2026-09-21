@@ -15,6 +15,7 @@
 import 'dart:async';
 import 'dart:ffi';
 import '../batch_size.dart';
+import '../instruction_measurement/io.dart';
 import 'compiler.dart';
 
 typedef GetCyclesFunc = Uint64 Function();
@@ -23,14 +24,21 @@ typedef GetCycles = int Function();
 @Native<Uint64 Function()>(symbol: 'get_cycles', isLeaf: true)
 external int _nativeGetCycles();
 
-/// Native CPU cycle counter for x86_64 and ARM64.
+/// Native CPU cycle counter.
+///
+/// On Linux, uses `perf_event_open` with `PERF_COUNT_HW_CPU_CYCLES` when
+/// available so that actual retired core cycles are measured on both x86_64
+/// and ARM64. When `perf_event_open` is unavailable (macOS, Windows, or
+/// restricted Linux containers), falls back to user-space register reads
+/// (`__rdtscp` on x86_64, `cntvct_el0` on ARM64).
 final class CycleCounter {
   static DynamicLibrary? _dylib;
   static GetCycles? _getCycles;
   static bool _supported = false;
   static Future<void>? _initFuture;
 
-  /// Initializes the CPU cycle counter if native compiler toolchains exist.
+  /// Initializes the CPU cycle counter if hardware PMU counters or native
+  /// compiler toolchains exist.
   static Future<void> init() => _initFuture ??= _doInit();
 
   static Future<void> _doInit() async {
@@ -42,7 +50,11 @@ final class CycleCounter {
         return;
       }
     } catch (_) {
-      // Fall back to runtime compilation.
+      // Fall back to runtime compilation or perf_event_open.
+    }
+
+    if (InstructionMeasurer.isCyclesSupported) {
+      _supported = true;
     }
 
     final libPath = await CycleCounterCompiler.compile();
@@ -54,21 +66,25 @@ final class CycleCounter {
             .asFunction<GetCycles>(isLeaf: true);
         // Test read
         final c = _getCycles!();
-        _supported = c > 0;
+        if (c > 0) {
+          _supported = true;
+        }
       } catch (_) {
-        _supported = false;
+        // Keep _supported true if perf_event_open is available.
       }
     }
   }
 
   /// Whether the CPU cycle counter is supported on this machine.
-  static bool get isSupported => _supported && _getCycles != null;
+  static bool get isSupported =>
+      _supported &&
+      (InstructionMeasurer.isCyclesSupported || _getCycles != null);
 
-  /// Reads the current value of the cycle counter.
+  /// Reads the current value of the user-space register cycle counter.
   ///
   /// Returns 0 if not supported or not initialized.
   static int read() {
-    if (!_supported || _getCycles == null) return 0;
+    if (_getCycles == null) return 0;
     return _getCycles!();
   }
 
@@ -81,6 +97,16 @@ final class CycleCounter {
     BatchSize? batchSize,
   }) async {
     await init();
+    if (InstructionMeasurer.isCyclesSupported) {
+      final perfCycles = await InstructionMeasurer.measureCycles(
+        fn: fn,
+        iterations: iterations,
+        setup: setup,
+        teardown: teardown,
+        batchSize: batchSize,
+      );
+      if (perfCycles != null) return perfCycles;
+    }
     if (!_supported || _getCycles == null) return null;
 
     final mode =

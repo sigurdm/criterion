@@ -1547,8 +1547,8 @@ final class Benchmark<T> {
   }
 
   /// Formats text to be bold in ANSI-supporting terminals.
-  static String bold(String text) {
-    if (!supportsAnsiEscapes) return text;
+  static String bold(String text, {bool? ansi}) {
+    if (!(ansi ?? supportsAnsiEscapes)) return text;
     return '\x1B[1m$text\x1B[22m';
   }
 

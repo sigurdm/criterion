@@ -14,7 +14,9 @@
 
 import 'dart:convert';
 import 'dart:io';
+
 import '../config.dart';
+import '../history_trim.dart';
 import '../result.dart';
 
 /// Generates reports (JSON and HTML) from benchmark results.
@@ -142,7 +144,10 @@ final class ReportGenerator {
         ? const HtmlEscape().convert(suiteName)
         : 'Criterion Benchmark Report';
     final jsonResults = _encodeForScript(results);
-    final jsonHistory = _encodeForScript(history ?? const []);
+    final slimmedHistory = history == null
+        ? const <BenchmarkResult>[]
+        : history.map((r) => slimHistoryEntry(r, keepSamples: false)).toList();
+    final jsonHistory = _encodeForScript(slimmedHistory);
 
     return '''
 <!DOCTYPE html>

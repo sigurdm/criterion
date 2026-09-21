@@ -286,8 +286,12 @@ dart run criterion:run benchmark/ --memory        # just allocations
 
 `--no-memory`, `--no-instructions`, `--no-cycles` and `--timing-only` still
 work and override whatever the suite's own config asks for, so you can strip a
-suite back to timing without editing it. See
-[`criterion:run` options](#criterionrun-options) for the full list.
+suite back to timing without editing it. On Linux, `--instructions` and
+`--cycles` use hardware PMU counters (`PERF_COUNT_HW_INSTRUCTIONS` and
+`PERF_COUNT_HW_CPU_CYCLES` via `perf_event_open`); on macOS, Windows, or
+restricted Linux environments without PMU access, `--cycles` falls back to
+user-space hardware counter registers (`__rdtscp` on x86_64, `cntvct_el0` on
+ARM64). See [`criterion:run` options](#criterionrun-options) for the full list.
 
 ### KBSSD Adaptive Benchmarking
 By default, Criterion uses KBSSD as an **adaptive warm-up**. It monitors a sliding window of measurements and waits until the "past" and "present" windows become statistically indistinguishable — that is, until the benchmark has reached a steady state and the JIT, caches and allocator have settled.
@@ -372,7 +376,7 @@ await criterion('My Suite', (c) { ... },
 );
 ```
 
-When `checkRegressions` is enabled, Criterion will compare the current run against the latest historical baseline. If a benchmark is statistically significantly slower (based on non-overlapping 95% confidence intervals of the mean), it will print a warning:
+When `checkRegressions` is enabled, Criterion compares the current run against the latest historical baseline using a two-sample bootstrap test on the mean difference, controlled for multiple comparisons across the suite via the Benjamini–Hochberg false discovery rate (FDR) procedure ($\alpha = 0.05$) and filtered by `noiseThreshold` (default 1%). If a benchmark is statistically significantly slower beyond the noise threshold, it prints a warning:
 
 ```text
   WARNING: Regression detected!

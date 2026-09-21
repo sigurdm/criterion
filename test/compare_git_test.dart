@@ -91,6 +91,7 @@ void main() async {
       final dartExe = Platform.resolvedExecutable;
       final compareGitScript = 'bin/compare_git.dart';
 
+      await Process.run('git', ['worktree', 'prune']);
       final beforeWorktrees = await Process.run('git', ['worktree', 'list']);
       final result = await Process.run(dartExe, [
         compareGitScript,

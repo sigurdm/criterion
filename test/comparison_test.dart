@@ -793,5 +793,117 @@ void main() {
         expect(compSimilar.compared.first.timeSignificant, isFalse);
       },
     );
+
+    test(
+      "Benjamini-Hochberg FDR suppresses marginal p-values in multi-benchmark suites while preserving true regressions",
+      () {
+        BenchmarkResult withSamples(
+          String name,
+          List<double> samples,
+          double mean,
+        ) {
+          return BenchmarkResult(
+            name: name,
+            iterations: 100,
+            primary: MeasurementResult(
+              sampleTimes: samples,
+              mean: mean,
+              median: mean,
+              stdDev: 1.0,
+              meanCI: ConfidenceInterval(
+                lowerBound: mean - 1.0,
+                upperBound: mean + 1.0,
+              ),
+              medianCI: ConfidenceInterval(
+                lowerBound: mean - 1.0,
+                upperBound: mean + 1.0,
+              ),
+              outliers: OutlierAnalysis(
+                lowSevere: 0,
+                lowMild: 0,
+                highMild: 0,
+                highSevere: 0,
+                outlierVariancePercentage: 0.0,
+              ),
+            ),
+          );
+        }
+
+        // Marginal benchmark with p ~ 0.02-0.03 (significant alone at alpha = 0.05,
+        // but exceeds (1 / 20) * 0.05 = 0.0025 when tested alongside 19 unchanged
+        // benchmarks).
+        final marginalBefore = withSamples("marginal", [
+          98.0,
+          99.0,
+          100.0,
+          101.0,
+          102.0,
+        ], 100.0);
+        final marginalAfter = withSamples("marginal", [
+          100.2,
+          101.2,
+          102.2,
+          103.2,
+          104.2,
+        ], 102.2);
+
+        // Alone (m = 1): threshold is 0.05, so p < 0.05 is significant.
+        final soloComp = compareResults([marginalBefore], [marginalAfter]);
+        expect(soloComp.compared.single.pValue!, lessThan(0.05));
+        expect(soloComp.compared.single.pValue!, greaterThan(0.005));
+        expect(soloComp.compared.single.timeSignificant, isTrue);
+
+        // In a 20-benchmark suite where the other 19 benchmarks have p > 0.5:
+        // BH rank-1 threshold is 0.05 / 20 = 0.0025, so the marginal p-value
+        // is suppressed as a false discovery.
+        final suiteBefore = <BenchmarkResult>[
+          marginalBefore,
+          for (var i = 0; i < 19; i++)
+            withSamples("unchanged_$i", [
+              100.0,
+              102.0,
+              98.0,
+              101.0,
+              99.0,
+            ], 100.0),
+        ];
+        final suiteAfter = <BenchmarkResult>[
+          marginalAfter,
+          for (var i = 0; i < 19; i++)
+            withSamples("unchanged_$i", [
+              100.2,
+              101.8,
+              98.2,
+              100.8,
+              99.2,
+            ], 100.04),
+        ];
+
+        final suiteComp = compareResults(suiteBefore, suiteAfter);
+        final marginalInSuite = suiteComp.compared.firstWhere(
+          (c) => c.name == "marginal",
+        );
+        expect(marginalInSuite.timeSignificant, isFalse);
+
+        // Adding a genuine large regression (p == 0.0 < 0.05 / 21) is still
+        // detected in the same suite.
+        final suiteWithRealRegBefore = [
+          ...suiteBefore,
+          withSamples("real_regression", [10.0, 10.1, 9.9, 10.0, 10.0], 10.0),
+        ];
+        final suiteWithRealRegAfter = [
+          ...suiteAfter,
+          withSamples("real_regression", [20.0, 20.1, 19.9, 20.0, 20.0], 20.0),
+        ];
+        final suiteWithRealRegComp = compareResults(
+          suiteWithRealRegBefore,
+          suiteWithRealRegAfter,
+        );
+        final realInSuite = suiteWithRealRegComp.compared.firstWhere(
+          (c) => c.name == "real_regression",
+        );
+        expect(realInSuite.timeSignificant, isTrue);
+      },
+    );
   });
 }

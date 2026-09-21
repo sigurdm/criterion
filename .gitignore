@@ -9,7 +9,7 @@ pubspec.lock
 # Benchmark reports
 benchmark/report*/
 benchmark/screenshots_report/
-benchmark/criterion_history.json
+benchmark/criterion_history.json*
 benchmark/baselines/
 
 # Temporary benchmark files written by the test suite

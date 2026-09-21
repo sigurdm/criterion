@@ -407,11 +407,21 @@ double _twoSampleBootstrapPValue(
 }
 
 /// Compares two lists of benchmark results.
+///
+/// Statistical significance for execution time (`timeSignificant`) is
+/// determined using a two-sample bootstrap test on the mean difference
+/// (falling back to 95% confidence interval overlap when fewer than 2 samples
+/// or zero variance are present), adjusted across all matched benchmarks in
+/// the suite via the Benjamini–Hochberg false discovery rate (FDR) procedure
+/// at $\alpha = 0.05$. Benchmarks that are statistically different but whose
+/// relative mean change does not exceed [noiseThreshold] are marked with
+/// `withinNoiseThreshold: true` and `timeSignificant: false`.
 SuiteComparison compareResults(
   List<BenchmarkResult> before,
   List<BenchmarkResult> after, {
   double noiseThreshold = 0.01,
 }) {
+  const fdrAlpha = 0.05;
   final beforeMap = {for (var r in before) _comparisonKey(r): r};
   final afterMap = {for (var r in after) _comparisonKey(r): r};
 
@@ -437,6 +447,8 @@ SuiteComparison compareResults(
   removed.sort();
   added.sort();
 
+  // Pass 1: compute per-benchmark p-values.
+  final pValues = <double>[];
   for (final key in matchedKeys) {
     final b = beforeMap[key]!;
     final a = afterMap[key]!;
@@ -465,8 +477,6 @@ SuiteComparison compareResults(
             ),
           )
         : a.primary.meanCI;
-    final bool statisticallyDifferent;
-    final double? pVal;
 
     final bNoOpMean = (b.net != null && b.noOp != null) ? b.noOp!.mean : 0.0;
     final aNoOpMean = (a.net != null && a.noOp != null) ? a.noOp!.mean : 0.0;
@@ -484,15 +494,35 @@ SuiteComparison compareResults(
     if (bTimes.length >= 2 &&
         aTimes.length >= 2 &&
         (b.primary.stdDev > 0 || a.primary.stdDev > 0)) {
-      final p = _twoSampleBootstrapPValue(bTimes, aTimes);
-      pVal = p;
-      statisticallyDifferent =
-          (p < 0.05 && !_intervalsOverlap(bMeanCI, aMeanCI)) || p < 0.01;
+      pValues.add(_twoSampleBootstrapPValue(bTimes, aTimes));
     } else {
       final diff = !_intervalsOverlap(bMeanCI, aMeanCI);
-      pVal = diff ? 0.0 : 1.0;
-      statisticallyDifferent = diff;
+      pValues.add(diff ? 0.0 : 1.0);
     }
+  }
+
+  // Pass 2: Benjamini–Hochberg FDR procedure across all matched benchmarks.
+  final m = matchedKeys.length;
+  final sortedIndices = List<int>.generate(m, (i) => i)
+    ..sort((i, j) => pValues[i].compareTo(pValues[j]));
+  var maxSignificantRank = 0; // 1-indexed rank k in {1, ..., m}
+  for (var idx = 0; idx < m; idx++) {
+    final rank = idx + 1;
+    final threshold = (rank / m) * fdrAlpha;
+    if (pValues[sortedIndices[idx]] < threshold) {
+      maxSignificantRank = rank;
+    }
+  }
+  final significantIndices = <int>{
+    for (var idx = 0; idx < maxSignificantRank; idx++) sortedIndices[idx],
+  };
+
+  for (var i = 0; i < m; i++) {
+    final key = matchedKeys[i];
+    final b = beforeMap[key]!;
+    final a = afterMap[key]!;
+    final pVal = pValues[i];
+    final statisticallyDifferent = significantIndices.contains(i);
 
     final bTime = b.net?.timeNs ?? b.primary.mean;
     final aTime = a.net?.timeNs ?? a.primary.mean;

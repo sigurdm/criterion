@@ -91,20 +91,30 @@ final _CloseDart? _close = () {
   }
 }();
 
-/// Helper to perform hardware CPU instruction measurements using Linux perf events.
-final class InstructionMeasurer {
-  /// Whether hardware instruction counting is supported on this platform.
-  static final bool isSupported = _checkSupported();
+// Linux `enum perf_hw_id` hardware event constants (`<linux/perf_event.h>`).
+const int _perfCountHwCpuCycles = 0;
+const int _perfCountHwInstructions = 1;
 
-  static Pointer<Uint8> _allocatePerfAttr() {
+/// Helper to perform hardware CPU instruction and cycle measurements using
+/// Linux `perf_event_open`.
+final class InstructionMeasurer {
+  /// Whether hardware instruction counting (`PERF_COUNT_HW_INSTRUCTIONS`) is
+  /// supported on this platform.
+  static final bool isSupported = _checkSupported(_perfCountHwInstructions);
+
+  /// Whether hardware CPU cycle counting (`PERF_COUNT_HW_CPU_CYCLES`) is
+  /// supported on this platform.
+  static final bool isCyclesSupported = _checkSupported(_perfCountHwCpuCycles);
+
+  static Pointer<Uint8> _allocatePerfAttr(int hwEventConfig) {
     const attrSize = 120;
     final attr = calloc<Uint8>(attrSize);
     // type (uint32) at offset 0 -> 0 (PERF_TYPE_HARDWARE)
     attr.cast<Uint32>().value = 0;
     // size (uint32) at offset 4 -> attrSize (120)
     (attr + 4).cast<Uint32>().value = attrSize;
-    // config (uint64) at offset 8 -> 0 (PERF_COUNT_HW_INSTRUCTIONS)
-    (attr + 8).cast<Uint64>().value = 0;
+    // config (uint64) at offset 8 -> hwEventConfig (0 = cycles, 1 = instructions)
+    (attr + 8).cast<Uint64>().value = hwEventConfig;
     // read_format (uint64) at offset 32 -> PERF_FORMAT_TOTAL_TIME_ENABLED|RUNNING
     (attr + 32).cast<Uint64>().value = _perfFormatTotalTimeEnabledAndRunning;
     // flags (uint64) at offset 40 -> 97 (disabled=1, exclude_kernel=1, exclude_hv=1)
@@ -112,7 +122,7 @@ final class InstructionMeasurer {
     return attr;
   }
 
-  static bool _checkSupported() {
+  static bool _checkSupported(int hwEventConfig) {
     if (!Platform.isLinux) return false;
     final sysOpen = _sysPerfEventOpen;
     if (sysOpen == null) return false;
@@ -125,7 +135,7 @@ final class InstructionMeasurer {
     final readFn = _read!;
     final closeFn = _close!;
 
-    final attr = _allocatePerfAttr();
+    final attr = _allocatePerfAttr(hwEventConfig);
     // Open the event (pid = 0 for calling thread, cpu = -1 for any CPU)
     final fd = syscallFn(sysOpen, attr.cast<Void>(), 0, -1, -1, 0);
     calloc.free(attr);
@@ -148,10 +158,10 @@ final class InstructionMeasurer {
 
       final counterBuf = calloc<Uint64>(3);
       final bytesRead = readFn(fd, counterBuf.cast<Void>(), 24);
-      final instructions = bytesRead == 24 ? counterBuf[0] : null;
+      final count = bytesRead == 24 ? counterBuf[0] : null;
       calloc.free(counterBuf);
 
-      return instructions != null && instructions > 0;
+      return count != null && count > 0;
     } catch (_) {
       return false;
     } finally {
@@ -170,13 +180,57 @@ final class InstructionMeasurer {
     BatchSize? batchSize,
   }) async {
     if (!isSupported) return null;
+    final perIter = await _measureHardwareEvent(
+      hwEventConfig: _perfCountHwInstructions,
+      eventLabel: 'instruction',
+      fn: fn,
+      iterations: iterations,
+      setup: setup,
+      teardown: teardown,
+      batchSize: batchSize,
+    );
+    if (perIter == null) return null;
+    return InstructionResult(instructionsPerIteration: perIter);
+  }
 
+  /// Measures hardware CPU core cycles (`PERF_COUNT_HW_CPU_CYCLES`) for [fn]
+  /// over [iterations] runs.
+  ///
+  /// Returns `null` if hardware cycle counting is not supported or fails.
+  static Future<double?> measureCycles({
+    required Function fn,
+    required int iterations,
+    Function? setup,
+    FutureOr<void> Function(dynamic)? teardown,
+    BatchSize? batchSize,
+  }) async {
+    if (!isCyclesSupported) return null;
+    return _measureHardwareEvent(
+      hwEventConfig: _perfCountHwCpuCycles,
+      eventLabel: 'cycle',
+      fn: fn,
+      iterations: iterations,
+      setup: setup,
+      teardown: teardown,
+      batchSize: batchSize,
+    );
+  }
+
+  static Future<double?> _measureHardwareEvent({
+    required int hwEventConfig,
+    required String eventLabel,
+    required Function fn,
+    required int iterations,
+    Function? setup,
+    FutureOr<void> Function(dynamic)? teardown,
+    BatchSize? batchSize,
+  }) async {
     final syscallFn = _syscall!;
     final ioctlFn = _ioctl!;
     final readFn = _read!;
     final closeFn = _close!;
 
-    final attr = _allocatePerfAttr();
+    final attr = _allocatePerfAttr(hwEventConfig);
     // Open the event (pid = 0 for calling thread, cpu = -1 for any CPU)
     final fd = syscallFn(_sysPerfEventOpen!, attr.cast<Void>(), 0, -1, -1, 0);
     calloc.free(attr);
@@ -252,20 +306,18 @@ final class InstructionMeasurer {
         return null;
       }
 
-      var scaledInstructions = rawCount.toDouble();
+      var scaledCount = rawCount.toDouble();
       if (timeRunning < timeEnabled) {
         final ratio = timeEnabled / timeRunning;
-        scaledInstructions *= ratio;
+        scaledCount *= ratio;
         stderr.writeln(
-          'Warning: perf hardware instruction counter was multiplexed '
-          '(running ${timeRunning}ns / enabled ${timeEnabled}ns); '
+          'Warning: perf hardware $eventLabel counter was multiplexed '
+          '(running ${(100.0 / ratio).toStringAsFixed(1)}% of enabled time); '
           'scaled count by ${ratio.toStringAsFixed(2)}x.',
         );
       }
 
-      return InstructionResult(
-        instructionsPerIteration: scaledInstructions / iterations,
-      );
+      return scaledCount / iterations;
     } catch (_) {
       return null;
     } finally {

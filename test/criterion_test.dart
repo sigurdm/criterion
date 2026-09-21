@@ -221,7 +221,15 @@ void main() {
       });
 
       test('Benchmark.bold wraps in ANSI bold escape codes', () {
-        expect(Benchmark.bold('test'), equals('\x1B[1mtest\x1B[22m'));
+        expect(
+          Benchmark.bold('test', ansi: true),
+          equals('\x1B[1mtest\x1B[22m'),
+        );
+        expect(Benchmark.bold('test', ansi: false), equals('test'));
+        expect(
+          Benchmark.bold('test'),
+          anyOf(equals('\x1B[1mtest\x1B[22m'), equals('test')),
+        );
       });
 
       test('throughput rate formatting in benchmark run', () async {

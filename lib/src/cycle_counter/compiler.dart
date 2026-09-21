@@ -50,7 +50,8 @@ CRITERION_EXPORT uint64_t get_cycles(void);
 #endif
 
 CRITERION_EXPORT uint64_t get_cycles(void) {
-    return __rdtsc();
+    unsigned int aux;
+    return __rdtscp(&aux);
 }
 #elif defined(__aarch64__)
 CRITERION_EXPORT uint64_t get_cycles(void) {
